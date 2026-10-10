@@ -6,9 +6,13 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import me.jxl.kiosk.plugins.PluginHost;
 
 public final class AppleAlbumTest {
     private static final AppleAlbumClient.Cancellation ACTIVE = new AppleAlbumClient.Cancellation() {
@@ -25,7 +29,8 @@ public final class AppleAlbumTest {
         enforcesSafeHostsAndInlineBudget();
         sanitizesEveryPublicError();
         jsonRoundTripsAndBoundsDepth();
-        System.out.println("AppleAlbumTest: 9 checks passed");
+        lifecycleCancellationDoesNotWaitForMetadataIo();
+        System.out.println("AppleAlbumTest: 10 checks passed");
     }
 
     private static void parsesOnlySupportedUrls() throws Exception {
@@ -142,6 +147,20 @@ public final class AppleAlbumTest {
         } catch (AlbumException expected) { assert expected.code == AlbumException.Code.TOO_LARGE; }
     }
 
+    private static void lifecycleCancellationDoesNotWaitForMetadataIo() throws Exception {
+        BlockingTransport transport = new BlockingTransport();
+        AppleSharedAlbumPlugin plugin = new AppleSharedAlbumPlugin(transport);
+        Map<String, Object> settings = new HashMap<>();
+        settings.put("albumUrl", "https://www.icloud.com/sharedalbum/#B12abcDEF");
+        plugin.start(new FakeHost(), settings);
+        assert transport.entered.await(2, TimeUnit.SECONDS) : "metadata request did not start";
+        long started = System.nanoTime();
+        plugin.stop();
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        assert transport.cancelled : "stop did not cancel active transport";
+        assert elapsedMillis < 500 : "stop waited for metadata I/O: " + elapsedMillis + " ms";
+    }
+
     private static void rejectsUrl(String value) throws Exception {
         try { AlbumUrl.parse(value); throw new AssertionError("invalid URL accepted"); }
         catch (AlbumException expected) { assert expected.code == AlbumException.Code.INVALID_URL; }
@@ -166,5 +185,40 @@ public final class AppleAlbumTest {
             throw new AssertionError("unexpected image request");
         }
         @Override public void cancelAll() { }
+    }
+
+    private static final class BlockingTransport implements AppleAlbumClient.Transport {
+        final CountDownLatch entered = new CountDownLatch(1);
+        volatile boolean cancelled;
+
+        @Override public AppleAlbumClient.Response post(URI uri, String json, AppleAlbumClient.Cancellation cancel)
+                throws AlbumException {
+            entered.countDown();
+            while (!cancelled) {
+                cancel.check();
+                try { Thread.sleep(10); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new AlbumException(AlbumException.Code.CANCELLED);
+                }
+            }
+            throw new AlbumException(AlbumException.Code.CANCELLED);
+        }
+
+        @Override public AppleAlbumClient.Response getImage(URI uri, AppleAlbumClient.Cancellation cancel)
+                throws AlbumException {
+            throw new AssertionError("unexpected image request");
+        }
+
+        @Override public void cancelAll() { cancelled = true; }
+    }
+
+    private static final class FakeHost implements PluginHost {
+        @Override public void publishScreensaver(String key, String title, String html) { }
+        @Override public void removeScreensaver(String key) { }
+        @Override public void status(String message, boolean error) { }
+        @Override public void showWindow(String title, String message, String buttonLabel) { }
+        @Override public void hideWindow() { }
+        @Override public void log(String message) { }
     }
 }

@@ -24,6 +24,7 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
     private ScheduledExecutorService executor;
     private ScheduledFuture<?> pending;
     private AppleAlbumClient client;
+    private final AppleAlbumClient.Transport testTransport;
     private volatile boolean running;
     private volatile String albumUrl = "";
     private volatile String order = "Shuffle";
@@ -32,6 +33,12 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
     private List<AppleAlbumClient.ImageRef> images = Collections.emptyList();
     private int cursor;
     private long loadedAt;
+
+    public AppleSharedAlbumPlugin() { this(null); }
+
+    AppleSharedAlbumPlugin(AppleAlbumClient.Transport testTransport) {
+        this.testTransport = testTransport;
+    }
 
     @Override public synchronized void start(PluginHost host, Map<String, Object> settings) {
         this.host = host;
@@ -43,7 +50,7 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
                 return thread;
             }
         });
-        this.client = new AppleAlbumClient(new SafeHttp());
+        this.client = new AppleAlbumClient(testTransport == null ? new SafeHttp() : testTransport);
         applySettings(settings);
         publishInitial();
         schedule(0, generation.incrementAndGet());
@@ -112,17 +119,30 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
         CancellationToken cancel = new CancellationToken(expectedGeneration);
         try {
             cancel.check();
-            if (albumUrl.isEmpty()) return;
+            final AppleAlbumClient currentClient;
+            final String requestedUrl;
+            final String requestedOrder;
+            final boolean reload;
             List<AppleAlbumClient.ImageRef> localImages;
             synchronized (this) {
-                if (images.isEmpty() || System.currentTimeMillis() - loadedAt >= REFRESH_MS) {
-                    List<AppleAlbumClient.ImageRef> loaded = client.list(albumUrl, cancel);
-                    loaded = new ArrayList<>(loaded);
-                    if ("Oldest first".equals(order)) Collections.reverse(loaded);
-                    if ("Shuffle".equals(order)) Collections.shuffle(loaded, random);
-                    images = loaded; cursor = 0; loadedAt = System.currentTimeMillis();
-                }
+                cancel.check();
+                if (albumUrl.isEmpty()) return;
+                currentClient = client;
+                requestedUrl = albumUrl;
+                requestedOrder = order;
+                reload = images.isEmpty() || System.currentTimeMillis() - loadedAt >= REFRESH_MS;
                 localImages = images;
+            }
+            if (currentClient == null) throw new AlbumException(AlbumException.Code.CANCELLED);
+            if (reload) {
+                List<AppleAlbumClient.ImageRef> loaded = new ArrayList<>(currentClient.list(requestedUrl, cancel));
+                if ("Oldest first".equals(requestedOrder)) Collections.reverse(loaded);
+                if ("Shuffle".equals(requestedOrder)) Collections.shuffle(loaded, random);
+                synchronized (this) {
+                    cancel.check();
+                    images = loaded; cursor = 0; loadedAt = System.currentTimeMillis();
+                    localImages = images;
+                }
             }
             AlbumException last = null;
             for (int attempt = 0; attempt < Math.min(3, localImages.size()); attempt++) {
@@ -136,7 +156,7 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
                     image = images.get(cursor++);
                 }
                 try {
-                    byte[] source = client.image(image, cancel);
+                    byte[] source = currentClient.image(image, cancel);
                     cancel.check();
                     byte[] display = PhotoEncoder.fit(source);
                     source = null;
