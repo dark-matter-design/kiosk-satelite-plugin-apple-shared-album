@@ -1,0 +1,20 @@
+# Security policy
+
+## Supported versions
+
+Until the first release, security fixes are made on `main`. After release, only the newest stable version is supported.
+
+## Report privately
+
+Use GitHub's private security-advisory form for this repository. Do not open a public issue containing an album URL, token, opaque ID, signed media URL, photo, response body, hostname, or device log with personal data.
+
+Include the plugin version, Kiosk Satellite version, Android version, URL **format** (legacy or current, not the value), and a minimal redacted reproduction. Synthetic fixtures are preferred.
+
+## Security invariants
+
+- Public, anonymous, read-only albums only; no Apple authentication or invite acceptance.
+- HTTPS and allowlisted Apple host suffixes at input, response-derived endpoints, media references, and every redirect.
+- No cookies, credentials, telemetry, disk photo cache, or exception/server-body logging.
+- Fixed upper bounds on time, redirects, pages, records, items, JSON depth/nodes, metadata bytes, image bytes/dimensions/pixels, and inline output.
+- Session generation checks and active-connection cancellation before publication.
+- Fixed user-facing error messages that contain no untrusted values.

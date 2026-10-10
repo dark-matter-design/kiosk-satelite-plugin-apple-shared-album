@@ -1,0 +1,17 @@
+Apple Shared Album for Kiosk Satellite
+Copyright 2026 dark-matter-design and contributors
+
+This project includes SDK interfaces and build/validation tooling from
+https://github.com/jxlarrea/kiosk-satellite-plugin-hello-world at commit
+faa4385e7d6dce28d6d7dd604ec83a810adb9ef9, by the Kiosk Satellite
+contributors, licensed under Apache License 2.0.
+
+Protocol behavior was independently implemented from public, anonymous web
+interoperability observations. Permissively licensed references consulted are
+listed in docs/research.md. The GPL-3.0-only Synology Photos plugin listed there
+was reviewed only for architecture and lifecycle concepts; no GPL source was
+copied into this project.
+
+Apple, iCloud, Apple Photos, and Kiosk Satellite are names of their respective
+owners. This independent community plugin is not endorsed by Apple or Kiosk
+Satellite.
