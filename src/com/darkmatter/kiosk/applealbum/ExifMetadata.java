@@ -1,16 +1,29 @@
 package com.darkmatter.kiosk.applealbum;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-/** Minimal bounded JPEG EXIF reader for capture date and GPS coordinates. */
+/** Minimal bounded JPEG metadata reader for capture date, GPS, and explicit place fields. */
 final class ExifMetadata {
     private static final int MAX_EXIF_BYTES = 64 * 1024;
+    private static final int MAX_TEXT_METADATA_BYTES = 64 * 1024;
+    private static final Pattern XMP_ATTRIBUTE = Pattern.compile(
+            "(?:Iptc4xmpCore:Location|photoshop:(?:City|State|Country))\\s*=\\s*(['\"])(.*?)\\1",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    private static final Pattern XMP_ELEMENT = Pattern.compile(
+            "<(?:Iptc4xmpCore:Location|photoshop:(?:City|State|Country))(?:\\s[^>]*)?>(.*?)</(?:Iptc4xmpCore:Location|photoshop:(?:City|State|Country))\\s*>",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private ExifMetadata() {}
 
     static PhotoMetadata read(byte[] image) {
         if (image == null || image.length < 4 || (image[0] & 255) != 0xff || (image[1] & 255) != 0xd8) {
             return PhotoMetadata.EMPTY;
         }
+        PhotoMetadata result = PhotoMetadata.EMPTY;
         int at = 2;
         while (at + 4 <= image.length) {
             if ((image[at] & 255) != 0xff) break;
@@ -22,12 +35,22 @@ final class ExifMetadata {
             if (length < 2 || at + length > image.length) break;
             if (marker == 0xe1 && length >= 8 && length <= MAX_EXIF_BYTES
                     && asciiEquals(image, at + 2, "Exif\0\0")) {
-                try { return readTiff(image, at + 8, length - 8); }
-                catch (RuntimeException ignored) { return PhotoMetadata.EMPTY; }
+                try { result = result.withFallback(readTiff(image, at + 8, length - 8)); }
+                catch (RuntimeException ignored) { }
+            } else if (marker == 0xe1 && length <= MAX_TEXT_METADATA_BYTES
+                    && asciiEquals(image, at + 2, "http://ns.adobe.com/xap/1.0/\0")) {
+                try {
+                    int start = at + 2 + "http://ns.adobe.com/xap/1.0/\0".length();
+                    result = result.withFallback(new PhotoMetadata(null, null, null,
+                            xmpPlace(image, start, at + length - start)));
+                } catch (RuntimeException ignored) { }
+            } else if (marker == 0xed && length <= MAX_TEXT_METADATA_BYTES) {
+                try { result = result.withFallback(readPhotoshopIptc(image, at + 2, length - 2)); }
+                catch (RuntimeException ignored) { }
             }
             at += length;
         }
-        return PhotoMetadata.EMPTY;
+        return result;
     }
 
     private static PhotoMetadata readTiff(byte[] data, int base, int length) {
@@ -52,6 +75,82 @@ final class ExifMetadata {
             longitude = coordinate(gps.longitude, gps.longitudeRef, false);
         }
         return new PhotoMetadata(capture, latitude, longitude);
+    }
+
+    private static PhotoMetadata readPhotoshopIptc(byte[] data, int start, int length) {
+        if (length < 14 || !asciiEquals(data, start, "Photoshop 3.0\0")) return PhotoMetadata.EMPTY;
+        int at = start + 14, end = start + length;
+        while (at + 12 <= end) {
+            if (!asciiEquals(data, at, "8BIM")) break;
+            int id = u16be(data, at + 4);
+            int nameLength = data[at + 6] & 255;
+            at += 7 + nameLength;
+            if (((1 + nameLength) & 1) != 0) at++;
+            if (at + 4 > end) break;
+            long rawSize = u32be(data, at); at += 4;
+            if (rawSize < 0 || rawSize > MAX_TEXT_METADATA_BYTES || at + rawSize > end) break;
+            if (id == 0x0404) return new PhotoMetadata(null, null, null,
+                    iptcPlace(data, at, (int) rawSize));
+            at += (int) rawSize + (((int) rawSize & 1) == 0 ? 0 : 1);
+        }
+        return PhotoMetadata.EMPTY;
+    }
+
+    private static String iptcPlace(byte[] data, int start, int length) {
+        int at = start, end = start + length;
+        String sublocation = null, city = null, state = null, country = null;
+        while (at + 5 <= end) {
+            if ((data[at] & 255) != 0x1c) { at++; continue; }
+            int record = data[at + 1] & 255, dataset = data[at + 2] & 255;
+            int valueLength = u16be(data, at + 3); at += 5;
+            if ((valueLength & 0x8000) != 0 || at + valueLength > end) break;
+            String value = metadataText(data, at, valueLength);
+            if (record == 2 && dataset == 92) sublocation = value;
+            else if (record == 2 && dataset == 90) city = value;
+            else if (record == 2 && dataset == 95) state = value;
+            else if (record == 2 && dataset == 101) country = value;
+            at += valueLength;
+        }
+        return joinPlace(sublocation, city, state, country);
+    }
+
+    private static String xmpPlace(byte[] data, int start, int length) {
+        if (length <= 0 || length > MAX_TEXT_METADATA_BYTES || start < 0 || start + length > data.length) return null;
+        String xml = new String(data, start, length, StandardCharsets.UTF_8);
+        List<String> values = new ArrayList<>();
+        Matcher attributes = XMP_ATTRIBUTE.matcher(xml);
+        while (attributes.find() && values.size() < 4) values.add(xmlText(attributes.group(2)));
+        Matcher elements = XMP_ELEMENT.matcher(xml);
+        while (elements.find() && values.size() < 8) values.add(xmlText(elements.group(1)));
+        return joinPlace(values.toArray(new String[values.size()]));
+    }
+
+    private static String metadataText(byte[] data, int at, int length) {
+        String value = new String(data, at, length, StandardCharsets.UTF_8);
+        if (value.indexOf('\ufffd') >= 0) value = new String(data, at, length, StandardCharsets.ISO_8859_1);
+        return PhotoMetadata.boundedText(value, 64);
+    }
+
+    private static String xmlText(String value) {
+        if (value == null || value.indexOf('<') >= 0) return null;
+        return PhotoMetadata.boundedText(value.replace("&amp;", "&").replace("&lt;", "<")
+                .replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'"), 64);
+    }
+
+    private static String joinPlace(String... parts) {
+        StringBuilder out = new StringBuilder();
+        List<String> seen = new ArrayList<>();
+        for (String raw : parts) {
+            String part = PhotoMetadata.boundedText(raw, 64);
+            if (part == null) continue;
+            String folded = part.toLowerCase(Locale.ROOT);
+            if (seen.contains(folded)) continue;
+            seen.add(folded);
+            if (out.length() > 0) out.append(", ");
+            if (out.length() + part.length() > 96) break;
+            out.append(part);
+        }
+        return PhotoMetadata.boundedText(out.toString(), 96);
     }
 
     private static Ifd readIfd(byte[] data, int base, int length, int at, boolean little) {
@@ -109,6 +208,10 @@ final class ExifMetadata {
     }
 
     private static int u16be(byte[] data, int at) { return ((data[at] & 255) << 8) | (data[at + 1] & 255); }
+    private static long u32be(byte[] data, int at) {
+        return ((long) (data[at] & 255) << 24) | ((long) (data[at + 1] & 255) << 16)
+                | ((long) (data[at + 2] & 255) << 8) | (data[at + 3] & 255L);
+    }
     private static int u16(byte[] data, int at, boolean little) {
         return little ? (data[at] & 255) | ((data[at + 1] & 255) << 8) : u16be(data, at);
     }

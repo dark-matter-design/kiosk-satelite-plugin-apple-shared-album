@@ -8,6 +8,8 @@ import java.util.TimeZone;
 
 final class SlideshowHtml {
     static final int SDK_INLINE_LIMIT = 512 * 1024;
+    static final int PIXEL_SHIFT_INTERVAL_MS = 60_000;
+    static final int PIXEL_SHIFT_AMPLITUDE_PX = 10;
     private SlideshowHtml() {}
 
     static String image(byte[] jpeg, String fit) throws AlbumException {
@@ -32,15 +34,14 @@ final class SlideshowHtml {
 
     private static String overlayCss(OverlayOptions options) {
         int timeSize = Math.max(22, Math.round(44 * options.scale / 100f));
-        return ".overlay{position:absolute;z-index:1;isolation:isolate;display:flex;flex-direction:column;padding:28px;max-width:calc(100% - 56px);"
+        return ".overlay{position:absolute;z-index:1;isolation:isolate;display:flex;flex-direction:column;padding:28px;max-width:100%;max-height:100%;box-sizing:border-box;"
                 + "pointer-events:none;color:" + options.color + ";font-family:" + options.font + ";font-weight:"
                 + options.weight + ";line-height:1.08;" + options.cssPosition() + ";"
                 + "text-shadow:0 2px 4px #000,0 0 12px #000,0 0 24px #000}"
                 + ".overlay:before{content:'';position:absolute;z-index:-1;inset:-36px;background:radial-gradient(ellipse at center,rgba(0,0,0,.58),transparent 70%)}"
                 + ".clock{font-size:" + timeSize + "px;white-space:nowrap}.current{font-size:"
                 + Math.max(14, Math.round(timeSize * .52f)) + "px;opacity:.82;margin-top:.18em;white-space:nowrap}"
-                + ".meta{font-size:" + Math.max(14, Math.round(timeSize * .42f)) + "px;opacity:.9;margin-top:.55em;max-width:28rem;overflow-wrap:anywhere}"
-                + "@media(max-width:480px){.overlay{padding:18px;max-width:calc(100% - 36px)}}";
+                + ".meta{font-size:" + Math.max(14, Math.round(timeSize * .42f)) + "px;opacity:.9;margin-top:.55em;max-width:28rem;overflow-wrap:anywhere}";
     }
 
     private static String overlayHtml(OverlayOptions options, PhotoMetadata metadata, Date now,
@@ -64,6 +65,9 @@ final class SlideshowHtml {
             out.append("</div>");
         }
         out.append("</section>");
+        if (options.pixelShift) {
+            out.append(pixelShiftScript());
+        }
         if (options.clock || options.currentDate) {
             out.append("<script>(()=>{const h24=").append(options.use24Hour).append(",secs=").append(options.seconds)
                     .append(";function tick(){const d=new Date(),c=document.getElementById('clock'),x=document.getElementById('current-date');")
@@ -73,6 +77,22 @@ final class SlideshowHtml {
                     .append("setTimeout(tick,secs?1000-d.getMilliseconds():60000-d.getSeconds()*1000-d.getMilliseconds())}tick()})()</script>");
         }
         return out.toString();
+    }
+
+    /**
+     * Moves the complete text block, never the photo. The nine-position sequence is
+     * deterministic from the wall-clock minute, so replacing the inline document
+     * during a slideshow does not restart or randomize the burn-in protection.
+     */
+    private static String pixelShiftScript() {
+        int a = PIXEL_SHIFT_AMPLITUDE_PX;
+        return "<script>(()=>{const o=document.querySelector('.overlay'),p=[[0,0],[" + a + ",0],[" + a + "," + a
+                + "],[0," + a + "],[-" + a + "," + a + "],[-" + a + ",0],[-" + a + ",-" + a
+                + "],[0,-" + a + "],[" + a + ",-" + a + "]],m=" + PIXEL_SHIFT_INTERVAL_MS + ";"
+                + "let timer=0,stopped=false;function stop(){stopped=true;if(timer)clearTimeout(timer)}"
+                + "function shift(){if(stopped||!o)return;const n=Date.now(),v=p[Math.floor(n/m)%p.length];"
+                + "o.style.transform='translate('+v[0]+'px,'+v[1]+'px)';timer=setTimeout(shift,m-n%m)}"
+                + "addEventListener('pagehide',stop,{once:true});addEventListener('beforeunload',stop,{once:true});shift()})()</script>";
     }
 
     static String formatTime(Date date, boolean h24, boolean seconds, TimeZone zone) {

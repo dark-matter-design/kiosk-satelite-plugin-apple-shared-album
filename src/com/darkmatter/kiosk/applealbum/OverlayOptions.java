@@ -15,6 +15,7 @@ final class OverlayOptions {
     final boolean currentDate;
     final boolean photoDate;
     final boolean location;
+    final boolean pixelShift;
     final String position;
     final String color;
     final String font;
@@ -22,9 +23,11 @@ final class OverlayOptions {
     final int scale;
 
     private OverlayOptions(boolean clock, boolean use24Hour, boolean seconds, boolean currentDate,
-            boolean photoDate, boolean location, String position, String color, String font, int weight, int scale) {
+            boolean photoDate, boolean location, boolean pixelShift, String position, String color,
+            String font, int weight, int scale) {
         this.clock = clock; this.use24Hour = use24Hour; this.seconds = seconds;
         this.currentDate = currentDate; this.photoDate = photoDate; this.location = location;
+        this.pixelShift = pixelShift;
         this.position = position; this.color = color; this.font = font; this.weight = weight; this.scale = scale;
     }
 
@@ -32,6 +35,7 @@ final class OverlayOptions {
         return new OverlayOptions(bool(settings, "showClock"), bool(settings, "clock24Hour"),
                 bool(settings, "clockSeconds"), bool(settings, "showCurrentDate"),
                 bool(settings, "showPhotoDate"), bool(settings, "showLocation"),
+                bool(settings, "overlayPixelShift"),
                 oneOf(string(settings, "overlayPosition", TOP_RIGHT), TOP_RIGHT,
                         TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT),
                 color(string(settings, "overlayColor", "#FAFAFA")),

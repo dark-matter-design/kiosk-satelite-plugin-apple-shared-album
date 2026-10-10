@@ -34,7 +34,8 @@ All overlay content is off by default. Enable any combination of:
 - **Clock:** current device-local time, with 12/24-hour and seconds options.
 - **Current date:** today's device-local date. This follows the stock Kiosk Satellite Clock behavior and is deliberately separate from photo metadata.
 - **Photo capture date:** the capture date from Apple's item metadata, falling back to EXIF in the already downloaded image when available.
-- **Photo location:** bounded GPS coordinates from EXIF in the already downloaded image. Apple commonly strips this metadata, so the line is simply omitted when unavailable. The plugin never reverse-geocodes coordinates or sends them to another service.
+- **Photo location:** a bounded place name from explicit IPTC/XMP location fields already embedded in the downloaded JPEG, otherwise source-labeled GPS coordinates from local EXIF. Titles, captions, and descriptions are never treated as locations. Apple commonly strips this metadata, so the line is omitted when unavailable. The plugin never reverse-geocodes coordinates or sends them to another service.
+- **Shift overlay pixels:** moves only the complete text overlay through a bounded deterministic pattern (at most 10 px per axis, once per minute) inside the overlay's safe inset. The photo remains completely stationary. This is off by default, matching Kiosk Satellite's Pixel shift default.
 
 The combined overlay can sit at top left, top right, bottom left, or bottom right. It also offers WebView-safe font family, weight, color, and 50–150% size controls. Text uses a dark vignette and shadow for contrast without changing fit/fill behavior. Clock, current date, capture date, and location remain disabled unless explicitly enabled; location is off by default for privacy.
 
@@ -55,7 +56,7 @@ See [SECURITY.md](SECURITY.md) and [docs/privacy.md](docs/privacy.md) for the th
 - `LegacyProtocol`: `webstream` → bounded 25-item `webasseturls` batches, including Apple's validated HTTP 330 partition handoff and response filtering to the checksums requested by each batch.
 - `CloudKitProtocol`: public `records/resolve` → anonymous shared-zone `records/query`, with a bounded reconstructed zone ID, bounded continuation-marker pagination, repeated-marker rejection, current `CPLAsset`/`CPLMaster` pairing, edited-photo rendition support, fixed filename-template expansion, video exclusion, and validated web-safe still-image rendition selection.
 
-Both produce validated Apple image references and bounded capture dates when the payload supplies one. Before conversion, `ExifMetadata` locally inspects at most 64 KiB of a downloaded JPEG's EXIF segment for capture date and GPS only. `SafeHttp` performs native Android HTTPS transport. `PhotoEncoder` bounds native bitmap decoding, scales to at most 1920 px on the longest edge, and emits a JPEG no larger than 360 KiB. `SlideshowHtml` base64-embeds that JPEG with the sanitized overlay in an isolated inline screensaver document and verifies the complete UTF-8 document stays below 512 KiB. Videos and unsupported image renditions are skipped.
+Both produce validated Apple image references and bounded capture dates when the payload supplies one. Before conversion, `ExifMetadata` locally inspects bounded JPEG EXIF, IPTC, and XMP segments for capture date, GPS, and explicit location fields only. It ignores caption/description fields. `SafeHttp` performs native Android HTTPS transport. `PhotoEncoder` bounds native bitmap decoding, scales to at most 1920 px on the longest edge, and emits a JPEG no larger than 360 KiB. `SlideshowHtml` base64-embeds that JPEG with the sanitized overlay in an isolated inline screensaver document and verifies the complete UTF-8 document stays below 512 KiB. Videos and unsupported image renditions are skipped.
 
 ## Build and test
 
@@ -69,7 +70,7 @@ python3 tools/inspect_package.py
 python3 tools/audit_repository.py
 ```
 
-The build writes a deterministic versioned ZIP such as `dist/apple-shared-album-0.1.4.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. The ZIP contains exactly the Plugin Manager root files (`kiosk-satellite-plugin.json`, `plugin.jar`, and `LICENSE`) plus any supported `assets/` files; `NOTICE` remains in the repository and is linked below for upstream attribution. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
+The build writes a deterministic versioned ZIP such as `dist/apple-shared-album-0.1.5.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. The ZIP contains exactly the Plugin Manager root files (`kiosk-satellite-plugin.json`, `plugin.jar`, and `LICENSE`) plus any supported `assets/` files; `NOTICE` remains in the repository and is linked below for upstream attribution. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
 
 Tests use only synthetic JSON, fake transport responses, and reserved fake paths. They never contact an album. See [docs/development.md](docs/development.md) for the verification matrix and [docs/research.md](docs/research.md) for source/version/license provenance.
 
@@ -79,8 +80,8 @@ Tests use only synthetic JSON, fake transport responses, and reserved fake paths
 - Still images only; videos and Live Photo motion are skipped.
 - Albums are capped at 1,000 displayable images; CloudKit traversal is capped at 20 pages and 2,500 records.
 - No image is cached on disk. Restarting or refreshing needs network access.
-- Capture dates depend on Apple returning `dateCreated` (legacy) or `assetDate` (CloudKit), or on usable JPEG EXIF. GPS display depends on usable JPEG EXIF; the maintained permissive protocol references inspected do not expose a stable Apple payload location field.
-- Automated tests prove parsing, protocol shaping, safety bounds, pagination, overlay rendering, local EXIF parsing, packaging, and compilation with synthetic fixtures. **A maintainer must still install the ZIP on a Kiosk Satellite 2026.10.18+ device and test owner-provided public albums in both URL formats before publishing v0.1.4.** Never put a live album URL, photo, or metadata in an issue, fixture, CI variable, commit, or log.
+- Capture dates depend on Apple returning `dateCreated` (legacy) or `assetDate` (CloudKit), or on usable JPEG EXIF. Place names require explicit IPTC/XMP location fields in the downloaded JPEG; otherwise GPS display requires usable JPEG EXIF. The maintained protocol references inspected do not expose a stable Apple payload place field. True names for coordinate-only photos require an explicit privacy/provider choice for reverse geocoding.
+- Automated tests prove parsing, protocol shaping, safety bounds, pagination, overlay rendering, text-only pixel shift, local EXIF/IPTC/XMP parsing, packaging, and compilation with synthetic fixtures. **A maintainer must still install the ZIP on a Kiosk Satellite 2026.10.18+ device and test owner-provided public albums in both URL formats before publishing v0.1.5.** Never put a live album URL, photo, coordinate, or metadata in an issue, fixture, CI variable, commit, or log.
 
 ## License
 

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "apple-shared-album",
   "name": "Apple Shared Album",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "apiVersion": 1,
   "minAndroidSdk": 24,
   "entryClass": "com.darkmatter.kiosk.applealbum.AppleSharedAlbumPlugin",
@@ -118,7 +118,15 @@
       "title": "Show photo location",
       "default": false,
       "group": "Overlay",
-      "description": "Show bounded GPS coordinates only when present in downloaded image EXIF. No geocoding or third-party request is made. Off by default for privacy."
+      "description": "Show a bounded place name only from explicit local IPTC/XMP location fields, otherwise source-labeled GPS coordinates from local EXIF. Captions are never treated as locations. No geocoding or third-party request is made. Off by default for privacy."
+    },
+    {
+      "key": "overlayPixelShift",
+      "type": "boolean",
+      "title": "Shift overlay pixels",
+      "default": false,
+      "group": "Overlay",
+      "description": "Move the complete text overlay by up to 10 pixels once per minute to reduce OLED burn-in. The photo does not move. Off by default, matching Kiosk Satellite's Pixel shift default."
     },
     {
       "key": "overlayColor",

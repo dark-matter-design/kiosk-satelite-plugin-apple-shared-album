@@ -7,34 +7,42 @@ import java.util.Date;
 import java.util.Locale;
 import java.util.TimeZone;
 
-/** Bounded non-identifying presentation metadata carried with one image. */
+/** Bounded presentation metadata carried with one image. */
 final class PhotoMetadata {
-    static final PhotoMetadata EMPTY = new PhotoMetadata(null, null, null);
+    static final PhotoMetadata EMPTY = new PhotoMetadata(null, null, null, null);
     private static final long MIN_CAPTURE_MILLIS = -2208988800000L; // 1900-01-01
     private static final long MAX_CAPTURE_MILLIS = 7258118400000L;  // 2200-01-01
 
     final Long captureMillis;
     final Double latitude;
     final Double longitude;
+    final String placeName;
 
     PhotoMetadata(Long captureMillis, Double latitude, Double longitude) {
+        this(captureMillis, latitude, longitude, null);
+    }
+
+    PhotoMetadata(Long captureMillis, Double latitude, Double longitude, String placeName) {
         this.captureMillis = validMillis(captureMillis) ? captureMillis : null;
         this.latitude = validCoordinate(latitude, -90, 90) ? latitude : null;
         this.longitude = validCoordinate(longitude, -180, 180) ? longitude : null;
+        this.placeName = boundedText(placeName, 96);
     }
 
     PhotoMetadata withFallback(PhotoMetadata fallback) {
         if (fallback == null) return this;
         return new PhotoMetadata(captureMillis != null ? captureMillis : fallback.captureMillis,
                 latitude != null ? latitude : fallback.latitude,
-                longitude != null ? longitude : fallback.longitude);
+                longitude != null ? longitude : fallback.longitude,
+                placeName != null ? placeName : fallback.placeName);
     }
 
-    boolean hasLocation() { return latitude != null && longitude != null; }
+    boolean hasLocation() { return placeName != null || (latitude != null && longitude != null); }
 
     String formattedLocation() {
+        if (placeName != null) return placeName;
         if (!hasLocation()) return null;
-        return String.format(Locale.ROOT, "%.5f° %s, %.5f° %s",
+        return String.format(Locale.ROOT, "GPS · %.5f° %s, %.5f° %s",
                 Math.abs(latitude), latitude < 0 ? "S" : "N",
                 Math.abs(longitude), longitude < 0 ? "W" : "E");
     }
@@ -84,7 +92,11 @@ final class PhotoMetadata {
         StringBuilder out = new StringBuilder(Math.min(raw.length(), max));
         for (int i = 0; i < raw.length() && out.length() < max; i++) {
             char c = raw.charAt(i);
-            if (c >= 0x20 && c != 0x7f) out.append(c);
+            int type = Character.getType(c);
+            if (Character.isWhitespace(c)) out.append(' ');
+            else if (!Character.isISOControl(c) && type != Character.FORMAT
+                    && type != Character.PRIVATE_USE && type != Character.SURROGATE
+                    && type != Character.UNASSIGNED) out.append(c);
         }
         String value = out.toString().trim().replaceAll("\\s+", " ");
         return value.isEmpty() ? null : value;

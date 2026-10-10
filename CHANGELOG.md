@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.1.5 — 2026-10-10
+
+- Add an explicit, off-by-default overlay pixel-shift setting. Only the overlay container moves; the photo element and its fit/fill transform remain stationary.
+- Match the relevant stock Kiosk Satellite safeguards with a one-minute interval, a deterministic per-axis maximum of 10 px, a 28 px overlay inset, all four anchors, bounded layout, and timer teardown when the inline document leaves the page.
+- Add synthetic regressions that separately inspect the image CSS and shift script, proving that transform writes target only `.overlay`, along with amplitude, interval, inset, anchor, disabled-state, and lifecycle checks.
+- Prefer bounded, sanitized human-readable place names from explicit IPTC City/Sub-location/Province-State/Country or XMP IPTC Location/Photoshop City/State/Country fields already present in the downloaded JPEG. Never treat title, caption, description, or other free-form text as a location.
+- Keep source-labeled EXIF GPS coordinates as the fallback. No reverse-geocoding request, external host, credential, live album, or live coordinate was added or used.
+- Update privacy, security, development, and research documentation for local place metadata and the external reverse-geocoding decision boundary.
+
+No GitHub release is created by this source change.
+
 ## 0.1.4 — 2026-10-10
 
 - Add optional current-time, current-date, photo-capture-date, and photo-location overlays in all four corners; every overlay remains off by default and existing settings are preserved.

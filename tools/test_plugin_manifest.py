@@ -28,12 +28,15 @@ class BuildManifestTest(unittest.TestCase):
 
     def test_overlay_defaults_positions_and_privacy_contract(self):
         manifest = json.loads((Path(__file__).resolve().parents[1] / 'kiosk-satellite-plugin.json').read_text())
-        self.assertEqual(manifest['version'], '0.1.4')
+        self.assertEqual(manifest['version'], '0.1.5')
         settings = {setting['key']: setting for setting in manifest['settings']}
         self.assertEqual(settings['showClock']['default'], False)
         self.assertEqual(settings['showCurrentDate']['default'], False)
         self.assertEqual(settings['showPhotoDate']['default'], False)
         self.assertEqual(settings['showLocation']['default'], False)
+        self.assertEqual(settings['overlayPixelShift']['default'], False)
+        self.assertIn('10 pixels once per minute', settings['overlayPixelShift']['description'])
+        self.assertIn('photo does not move', settings['overlayPixelShift']['description'])
         self.assertEqual(settings['overlayPosition']['default'], 'Top right')
         self.assertEqual(
             settings['overlayPosition']['options'],

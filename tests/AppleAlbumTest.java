@@ -37,6 +37,7 @@ public final class AppleAlbumTest {
         durationSettingIsBoundedBeforeScheduling();
         overlayOptionsAreBoundedAndPrivateByDefault();
         overlayPositionsAndUnavailableMetadataRenderSafely();
+        overlayPixelShiftIsDeterministicBoundedAndTextOnly();
         overlayFormattingHooksAreDeterministic();
         extractsBoundedExifMetadataLocally();
         enforcesSafeHostsAndInlineBudget();
@@ -44,7 +45,7 @@ public final class AppleAlbumTest {
         jsonRoundTripsAndBoundsDepth();
         publishesSelectableScreensaverBeforeAlbumIo();
         lifecycleCancellationDoesNotWaitForMetadataIo();
-        System.out.println("AppleAlbumTest: 21 checks passed");
+        System.out.println("AppleAlbumTest: 22 checks passed");
     }
 
     private static void parsesOnlySupportedUrls() throws Exception {
@@ -60,7 +61,7 @@ public final class AppleAlbumTest {
     private static void legacyListsSyntheticImages() throws Exception {
         FakeTransport fake = new FakeTransport();
         fake.add(200, "{\"photos\":["
-                + "{\"photoGuid\":\"photo-one\",\"dateCreated\":\"2024-06-15T10:30:00Z\",\"derivatives\":{"
+                + "{\"photoGuid\":\"photo-one\",\"dateCreated\":\"2024-06-15T10:30:00Z\",\"caption\":\"Not a place\",\"derivatives\":{"
                 + "\"342\":{\"checksum\":\"small\",\"fileSize\":\"43050\",\"width\":\"257\",\"height\":\"342\"},"
                 + "\"2049\":{\"checksum\":\"large\",\"fileSize\":985681,\"width\":1537,\"height\":2049}}},"
                 + "{\"photoGuid\":\"video-one\",\"mediaAssetType\":\"video\",\"derivatives\":{\"720p\":{\"checksum\":\"movie\"}}}]}");
@@ -72,6 +73,7 @@ public final class AppleAlbumTest {
         assert images.size() == 1;
         assert images.get(0).uri.equals(URI.create("https://cvws.icloud-content.com/synthetic/image.jpg"));
         assert images.get(0).metadata.captureMillis != null;
+        assert images.get(0).metadata.formattedLocation() == null;
         assert fake.requests.get(0).endsWith("/webstream");
         assert fake.requests.get(1).endsWith("/webasseturls");
         assert fake.bodies.get(1).contains("photo-one") && !fake.bodies.get(1).contains("video-one");
@@ -177,7 +179,7 @@ public final class AppleAlbumTest {
         fake.add(200, "{\"records\":["
                 + "{\"recordType\":\"CPLAsset\",\"recordName\":\"asset-edited\",\"fields\":{"
                 + "\"masterRef\":{\"value\":{\"recordName\":\"master-edited\"}},"
-                + "\"assetDate\":{\"value\":1718447400000},"
+                + "\"assetDate\":{\"value\":1718447400000},\"caption\":{\"value\":\"Not a place\"},"
                 + "\"resJPEGFullRes\":{\"value\":{\"downloadURL\":\"https://cvws.icloud-content.com/synthetic/${f}?sig=edited\"}},"
                 + "\"resJPEGFullWidth\":{\"value\":2048}}},"
                 + "{\"recordType\":\"CPLMaster\",\"recordName\":\"master-edited\",\"fields\":{"
@@ -199,6 +201,7 @@ public final class AppleAlbumTest {
         assert images.get(0).id.equals("asset-edited");
         assert images.get(0).uri.equals(URI.create("https://cvws.icloud-content.com/synthetic/photo.jpg?sig=edited"));
         assert images.get(0).metadata.captureMillis.equals(1718447400000L);
+        assert images.get(0).metadata.formattedLocation() == null;
         assert images.get(1).id.equals("asset-original");
         assert images.get(1).uri.equals(URI.create("https://cvws.icloud-content.com/synthetic/photo.jpg?sig=original"));
         assert fake.requests.get(0).contains("sharing_url_key=OPAQUE_123");
@@ -258,18 +261,21 @@ public final class AppleAlbumTest {
     private static void overlayOptionsAreBoundedAndPrivateByDefault() {
         OverlayOptions defaults = OverlayOptions.from(Collections.<String, Object>emptyMap());
         assert !defaults.clock && !defaults.currentDate && !defaults.photoDate && !defaults.location;
+        assert !defaults.pixelShift;
         assert OverlayOptions.TOP_RIGHT.equals(defaults.position);
         assert "#FAFAFA".equals(defaults.color) && defaults.scale == 100;
 
         Map<String, Object> settings = new HashMap<>();
         settings.put("showClock", true); settings.put("clock24Hour", true); settings.put("clockSeconds", true);
         settings.put("showCurrentDate", true); settings.put("showPhotoDate", true); settings.put("showLocation", true);
+        settings.put("overlayPixelShift", true);
         settings.put("overlayPosition", "<script>bad corner</script>");
         settings.put("overlayColor", "red;background:url(https://example.invalid)");
         settings.put("overlayFont", "url(evil)"); settings.put("overlayWeight", "900;display:none");
         settings.put("overlayScale", Double.POSITIVE_INFINITY);
         OverlayOptions bounded = OverlayOptions.from(settings);
         assert bounded.clock && bounded.use24Hour && bounded.seconds && bounded.currentDate && bounded.photoDate && bounded.location;
+        assert bounded.pixelShift;
         assert OverlayOptions.TOP_RIGHT.equals(bounded.position);
         assert "#FAFAFA".equals(bounded.color) && "sans-serif".equals(bounded.font) && bounded.weight == 300;
         assert bounded.scale == 100;
@@ -281,17 +287,54 @@ public final class AppleAlbumTest {
         for (String position : positions) {
             Map<String, Object> settings = new HashMap<>();
             settings.put("showClock", true); settings.put("showPhotoDate", true); settings.put("showLocation", true);
+            settings.put("overlayPixelShift", true);
             settings.put("overlayPosition", position);
             String html = SlideshowHtml.image(new byte[32], "Fit whole photo", OverlayOptions.from(settings),
                     PhotoMetadata.EMPTY, new Date(0), Locale.US, TimeZone.getTimeZone("UTC"));
             assert html.contains("class=overlay") && html.contains("class=clock");
             assert !html.contains("class=meta") && !html.contains("class=location") && !html.contains("class=capture");
             assert !html.contains(">undefined<") && !html.contains(">null<");
+            assert html.contains("o.style.transform='translate('");
             if (position.startsWith("Top")) assert html.contains("top:0"); else assert html.contains("bottom:0");
             if (position.endsWith("left")) assert html.contains("left:0"); else assert html.contains("right:0");
         }
         String escaped = SlideshowHtml.message("<img src=x onerror=alert(1)> & \"private\"");
         assert !escaped.contains("<img src=x") && escaped.contains("&lt;img") && escaped.contains("&amp;");
+    }
+
+    private static void overlayPixelShiftIsDeterministicBoundedAndTextOnly() throws Exception {
+        Map<String, Object> settings = new HashMap<>();
+        settings.put("showClock", true);
+        settings.put("showCurrentDate", true);
+        settings.put("showPhotoDate", true);
+        settings.put("showLocation", true);
+        settings.put("overlayPixelShift", true);
+        String shifted = SlideshowHtml.image(new byte[32], "Fill screen", OverlayOptions.from(settings),
+                new PhotoMetadata(1718447405000L, -37.8136, 144.9631), new Date(1718447405000L),
+                Locale.US, TimeZone.getTimeZone("UTC"));
+        assert shifted.contains("p=[[0,0],[10,0],[10,10],[0,10],[-10,10],[-10,0],[-10,-10],[0,-10],[10,-10]]");
+        assert shifted.contains("m=60000") && shifted.contains("Math.floor(n/m)%p.length");
+        assert !shifted.contains("Math.random");
+        String style = shifted.substring(shifted.indexOf("<style>"), shifted.indexOf("</style>"));
+        String imageRule = style.substring(style.indexOf("img{"), style.indexOf("}", style.indexOf("img{")) + 1);
+        assert !imageRule.contains("transform") && !imageRule.contains("translate");
+        assert style.contains(".overlay{position:absolute") && style.contains("padding:28px")
+                && style.contains("max-width:100%") && style.contains("max-height:100%")
+                && style.contains("box-sizing:border-box");
+        String shiftScript = shifted.substring(shifted.indexOf("<script>(()=>{const o=document.querySelector('.overlay')"));
+        assert shiftScript.contains("o.style.transform=") && !shiftScript.contains("querySelector('img')")
+                && !shiftScript.contains("getElementById('photo')") && !shiftScript.contains("img.style")
+                && !shiftScript.contains("document.body.style.transform");
+        assert shiftScript.contains("pagehide") && shiftScript.contains("beforeunload")
+                && shiftScript.contains("clearTimeout(timer)") && shiftScript.contains("stopped||!o");
+        assert shifted.contains("GPS · 37.81360° S, 144.96310° E");
+        assert SlideshowHtml.PIXEL_SHIFT_INTERVAL_MS == 60_000;
+        assert SlideshowHtml.PIXEL_SHIFT_AMPLITUDE_PX == 10;
+
+        settings.put("overlayPixelShift", false);
+        String still = SlideshowHtml.image(new byte[32], "Fit whole photo", OverlayOptions.from(settings),
+                PhotoMetadata.EMPTY, new Date(0), Locale.US, TimeZone.getTimeZone("UTC"));
+        assert !still.contains("o.style.transform") && !still.contains("Math.floor(n/m)");
     }
 
     private static void overlayFormattingHooksAreDeterministic() throws Exception {
@@ -303,7 +346,7 @@ public final class AppleAlbumTest {
         assert SlideshowHtml.formatCurrentDate(instant, Locale.US, utc).contains("2024");
         PhotoMetadata metadata = new PhotoMetadata(instant.getTime(), -37.8136, 144.9631);
         assert metadata.formattedCaptureDate(Locale.US, utc).contains("2024");
-        assert "37.81360° S, 144.96310° E".equals(metadata.formattedLocation());
+        assert "GPS · 37.81360° S, 144.96310° E".equals(metadata.formattedLocation());
         assert PhotoMetadata.parseAppleDate("2024-06-15T10:30:05Z").equals(instant.getTime());
         assert PhotoMetadata.parseAppleDate("not a date") == null;
     }
@@ -315,10 +358,88 @@ public final class AppleAlbumTest {
         assert Math.abs(metadata.longitude + 122.4041666667) < 0.000001;
         assert metadata.formattedLocation().length() < 80;
         assert ExifMetadata.read(new byte[] {1, 2, 3}).captureMillis == null;
+        PhotoMetadata iptc = ExifMetadata.read(syntheticIptcJpeg());
+        assert "Fitzroy, Melbourne, Victoria, Australia".equals(iptc.formattedLocation());
+        assert iptc.latitude == null && iptc.longitude == null;
+        PhotoMetadata xmp = ExifMetadata.read(syntheticXmpJpeg());
+        assert "Carlton, Melbourne, Victoria, Australia".equals(xmp.formattedLocation());
+        PhotoMetadata named = new PhotoMetadata(null, -37.8136, 144.9631,
+                "  Fitzroy\n\u202e<script>alert(1)</script>  ");
+        assert "Fitzroy <script>alert(1)</script>".equals(named.formattedLocation());
+        String namedHtml = SlideshowHtml.image(new byte[32], "Fit whole photo",
+                locationOptions(), named, new Date(0), Locale.US, TimeZone.getTimeZone("UTC"));
+        assert namedHtml.contains("Fitzroy &lt;script&gt;alert(1)&lt;/script&gt;")
+                && !namedHtml.contains("Fitzroy <script>");
         byte[] malformed = syntheticExifJpeg();
         le32(malformed, 12 + 4, Integer.MAX_VALUE);
         assert ExifMetadata.read(malformed).captureMillis == null;
         assert new PhotoMetadata(null, 91d, 181d).formattedLocation() == null;
+    }
+
+    private static OverlayOptions locationOptions() {
+        Map<String, Object> settings = new HashMap<>();
+        settings.put("showLocation", true);
+        return OverlayOptions.from(settings);
+    }
+
+    private static byte[] syntheticIptcJpeg() {
+        byte[] iptc = concat(iptc(92, "Fitzroy"), iptc(90, "Melbourne"),
+                iptc(95, "Victoria"), iptc(101, "Australia"),
+                iptc(120, "A caption that must never become a place"));
+        byte[] header = "Photoshop 3.0\0".getBytes(StandardCharsets.US_ASCII);
+        byte[] resource = new byte[4 + 2 + 2 + 4 + iptc.length + (iptc.length & 1)];
+        byte[] signature = "8BIM".getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(signature, 0, resource, 0, signature.length);
+        resource[4] = 0x04; resource[5] = 0x04; // IPTC-NAA resource
+        resource[6] = 0; resource[7] = 0; // empty Pascal name plus padding
+        be32(resource, 8, iptc.length);
+        System.arraycopy(iptc, 0, resource, 12, iptc.length);
+        byte[] payload = concat(header, resource);
+        byte[] jpeg = new byte[payload.length + 8];
+        jpeg[0] = (byte) 0xff; jpeg[1] = (byte) 0xd8;
+        jpeg[2] = (byte) 0xff; jpeg[3] = (byte) 0xed;
+        int segmentLength = payload.length + 2;
+        jpeg[4] = (byte) (segmentLength >>> 8); jpeg[5] = (byte) segmentLength;
+        System.arraycopy(payload, 0, jpeg, 6, payload.length);
+        jpeg[jpeg.length - 2] = (byte) 0xff; jpeg[jpeg.length - 1] = (byte) 0xd9;
+        return jpeg;
+    }
+
+    private static byte[] iptc(int dataset, String text) {
+        byte[] value = text.getBytes(StandardCharsets.UTF_8);
+        byte[] out = new byte[5 + value.length];
+        out[0] = 0x1c; out[1] = 2; out[2] = (byte) dataset;
+        out[3] = (byte) (value.length >>> 8); out[4] = (byte) value.length;
+        System.arraycopy(value, 0, out, 5, value.length);
+        return out;
+    }
+
+    private static byte[] syntheticXmpJpeg() {
+        String xml = "<rdf:Description Iptc4xmpCore:Location=\"Carlton\" photoshop:City=\"Melbourne\" "
+                + "photoshop:State=\"Victoria\" photoshop:Country=\"Australia\" "
+                + "dc:description=\"A caption that must never become a place\"/>";
+        byte[] payload = concat("http://ns.adobe.com/xap/1.0/\0".getBytes(StandardCharsets.US_ASCII),
+                xml.getBytes(StandardCharsets.UTF_8));
+        byte[] jpeg = new byte[payload.length + 8];
+        jpeg[0] = (byte) 0xff; jpeg[1] = (byte) 0xd8;
+        jpeg[2] = (byte) 0xff; jpeg[3] = (byte) 0xe1;
+        int segmentLength = payload.length + 2;
+        jpeg[4] = (byte) (segmentLength >>> 8); jpeg[5] = (byte) segmentLength;
+        System.arraycopy(payload, 0, jpeg, 6, payload.length);
+        jpeg[jpeg.length - 2] = (byte) 0xff; jpeg[jpeg.length - 1] = (byte) 0xd9;
+        return jpeg;
+    }
+
+    private static byte[] concat(byte[]... values) {
+        int length = 0; for (byte[] value : values) length += value.length;
+        byte[] out = new byte[length]; int at = 0;
+        for (byte[] value : values) { System.arraycopy(value, 0, out, at, value.length); at += value.length; }
+        return out;
+    }
+
+    private static void be32(byte[] out, int at, int value) {
+        out[at] = (byte) (value >>> 24); out[at + 1] = (byte) (value >>> 16);
+        out[at + 2] = (byte) (value >>> 8); out[at + 3] = (byte) value;
     }
 
     private static byte[] syntheticExifJpeg() {
