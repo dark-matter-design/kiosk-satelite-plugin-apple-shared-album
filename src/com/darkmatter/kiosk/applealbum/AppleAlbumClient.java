@@ -28,10 +28,13 @@ final class AppleAlbumClient {
     static final class ImageRef {
         final URI uri;
         final String id;
-        ImageRef(URI uri, String id) throws AlbumException {
+        final PhotoMetadata metadata;
+        ImageRef(URI uri, String id) throws AlbumException { this(uri, id, PhotoMetadata.EMPTY); }
+        ImageRef(URI uri, String id, PhotoMetadata metadata) throws AlbumException {
             SafeHttp.validateAppleUri(uri);
             this.uri = uri;
             this.id = id == null ? "" : id;
+            this.metadata = metadata == null ? PhotoMetadata.EMPTY : metadata;
         }
     }
 

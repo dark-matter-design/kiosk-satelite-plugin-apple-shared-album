@@ -27,6 +27,15 @@ def _table(data, size_offset, item_size):
     return size, offset
 
 
+def _modified_utf8(data):
+    """Decode DEX's modified UTF-8, including its overlong encoded NUL."""
+    # Class/type descriptors are ASCII, but the DEX string table can contain
+    # unrelated constants such as Java strings with embedded NULs. Python's
+    # strict UTF-8 decoder correctly rejects their modified encoding unless it
+    # is normalized first. surrogatepass accepts DEX/CESU-8 surrogate triples.
+    return data.replace(b'\xc0\x80', b'\0').decode('utf-8', errors='surrogatepass')
+
+
 def class_interfaces(data):
     """Return {class descriptor: (access flags, interface descriptors)}."""
     if len(data) < 112 or data[:8] not in (b'dex\n035\0', b'dex\n037\0', b'dex\n038\0', b'dex\n039\0', b'dex\n040\0', b'dex\n041\0'):
@@ -39,7 +48,7 @@ def class_interfaces(data):
         end = data.find(b'\0', at)
         if end < 0:
             raise ValueError('Unterminated DEX string')
-        strings.append(data[at:end].decode('utf-8'))
+        strings.append(_modified_utf8(data[at:end]))
     type_count, type_offset = _table(data, 0x40, 4)
     types = [strings[_u32(data, type_offset + index * 4)] for index in range(type_count)]
     class_count, class_offset = _table(data, 0x60, 32)

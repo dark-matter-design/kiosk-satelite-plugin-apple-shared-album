@@ -26,6 +26,28 @@ class BuildManifestTest(unittest.TestCase):
             {'type': 'number', 'default': 30, 'min': 5, 'max': 3600, 'step': 5, 'unit': 's'},
         )
 
+    def test_overlay_defaults_positions_and_privacy_contract(self):
+        manifest = json.loads((Path(__file__).resolve().parents[1] / 'kiosk-satellite-plugin.json').read_text())
+        self.assertEqual(manifest['version'], '0.1.4')
+        settings = {setting['key']: setting for setting in manifest['settings']}
+        self.assertEqual(settings['showClock']['default'], False)
+        self.assertEqual(settings['showCurrentDate']['default'], False)
+        self.assertEqual(settings['showPhotoDate']['default'], False)
+        self.assertEqual(settings['showLocation']['default'], False)
+        self.assertEqual(settings['overlayPosition']['default'], 'Top right')
+        self.assertEqual(
+            settings['overlayPosition']['options'],
+            ['Top left', 'Top right', 'Bottom left', 'Bottom right'],
+        )
+        self.assertEqual(settings['clock24Hour']['default'], False)
+        self.assertEqual(settings['clockSeconds']['default'], False)
+        self.assertEqual(settings['overlayColor']['default'], '#FAFAFA')
+        self.assertEqual(
+            {key: settings['overlayScale'][key] for key in ('default', 'min', 'max', 'step', 'unit')},
+            {'default': 100, 'min': 50, 'max': 150, 'step': 5, 'unit': '%'},
+        )
+        self.assertIn('No geocoding', settings['showLocation']['description'])
+
     def test_release_version_overrides_source_without_editing_it(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'kiosk-satellite-plugin.json'

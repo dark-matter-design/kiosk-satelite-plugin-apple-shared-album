@@ -10,6 +10,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import me.jxl.kiosk.plugins.PluginHost;
@@ -32,12 +35,16 @@ public final class AppleAlbumTest {
         cloudKitRejectsRepeatedMarker();
         cloudKitRejectsAuthenticationRequired();
         durationSettingIsBoundedBeforeScheduling();
+        overlayOptionsAreBoundedAndPrivateByDefault();
+        overlayPositionsAndUnavailableMetadataRenderSafely();
+        overlayFormattingHooksAreDeterministic();
+        extractsBoundedExifMetadataLocally();
         enforcesSafeHostsAndInlineBudget();
         sanitizesEveryPublicError();
         jsonRoundTripsAndBoundsDepth();
         publishesSelectableScreensaverBeforeAlbumIo();
         lifecycleCancellationDoesNotWaitForMetadataIo();
-        System.out.println("AppleAlbumTest: 17 checks passed");
+        System.out.println("AppleAlbumTest: 21 checks passed");
     }
 
     private static void parsesOnlySupportedUrls() throws Exception {
@@ -53,7 +60,7 @@ public final class AppleAlbumTest {
     private static void legacyListsSyntheticImages() throws Exception {
         FakeTransport fake = new FakeTransport();
         fake.add(200, "{\"photos\":["
-                + "{\"photoGuid\":\"photo-one\",\"derivatives\":{"
+                + "{\"photoGuid\":\"photo-one\",\"dateCreated\":\"2024-06-15T10:30:00Z\",\"derivatives\":{"
                 + "\"342\":{\"checksum\":\"small\",\"fileSize\":\"43050\",\"width\":\"257\",\"height\":\"342\"},"
                 + "\"2049\":{\"checksum\":\"large\",\"fileSize\":985681,\"width\":1537,\"height\":2049}}},"
                 + "{\"photoGuid\":\"video-one\",\"mediaAssetType\":\"video\",\"derivatives\":{\"720p\":{\"checksum\":\"movie\"}}}]}");
@@ -64,6 +71,7 @@ public final class AppleAlbumTest {
         List<AppleAlbumClient.ImageRef> images = client.list("https://www.icloud.com/sharedalbum/#B12abcDEF", ACTIVE);
         assert images.size() == 1;
         assert images.get(0).uri.equals(URI.create("https://cvws.icloud-content.com/synthetic/image.jpg"));
+        assert images.get(0).metadata.captureMillis != null;
         assert fake.requests.get(0).endsWith("/webstream");
         assert fake.requests.get(1).endsWith("/webasseturls");
         assert fake.bodies.get(1).contains("photo-one") && !fake.bodies.get(1).contains("video-one");
@@ -169,6 +177,7 @@ public final class AppleAlbumTest {
         fake.add(200, "{\"records\":["
                 + "{\"recordType\":\"CPLAsset\",\"recordName\":\"asset-edited\",\"fields\":{"
                 + "\"masterRef\":{\"value\":{\"recordName\":\"master-edited\"}},"
+                + "\"assetDate\":{\"value\":1718447400000},"
                 + "\"resJPEGFullRes\":{\"value\":{\"downloadURL\":\"https://cvws.icloud-content.com/synthetic/${f}?sig=edited\"}},"
                 + "\"resJPEGFullWidth\":{\"value\":2048}}},"
                 + "{\"recordType\":\"CPLMaster\",\"recordName\":\"master-edited\",\"fields\":{"
@@ -189,6 +198,7 @@ public final class AppleAlbumTest {
         assert images.size() == 2;
         assert images.get(0).id.equals("asset-edited");
         assert images.get(0).uri.equals(URI.create("https://cvws.icloud-content.com/synthetic/photo.jpg?sig=edited"));
+        assert images.get(0).metadata.captureMillis.equals(1718447400000L);
         assert images.get(1).id.equals("asset-original");
         assert images.get(1).uri.equals(URI.create("https://cvws.icloud-content.com/synthetic/photo.jpg?sig=original"));
         assert fake.requests.get(0).contains("sharing_url_key=OPAQUE_123");
@@ -243,6 +253,116 @@ public final class AppleAlbumTest {
         assert AppleSharedAlbumPlugin.boundedIntervalSeconds(3598.0d) == 3600;
         assert AppleSharedAlbumPlugin.boundedIntervalSeconds(3600) == 3600;
         assert AppleSharedAlbumPlugin.boundedIntervalSeconds(Long.MAX_VALUE) == 3600;
+    }
+
+    private static void overlayOptionsAreBoundedAndPrivateByDefault() {
+        OverlayOptions defaults = OverlayOptions.from(Collections.<String, Object>emptyMap());
+        assert !defaults.clock && !defaults.currentDate && !defaults.photoDate && !defaults.location;
+        assert OverlayOptions.TOP_RIGHT.equals(defaults.position);
+        assert "#FAFAFA".equals(defaults.color) && defaults.scale == 100;
+
+        Map<String, Object> settings = new HashMap<>();
+        settings.put("showClock", true); settings.put("clock24Hour", true); settings.put("clockSeconds", true);
+        settings.put("showCurrentDate", true); settings.put("showPhotoDate", true); settings.put("showLocation", true);
+        settings.put("overlayPosition", "<script>bad corner</script>");
+        settings.put("overlayColor", "red;background:url(https://example.invalid)");
+        settings.put("overlayFont", "url(evil)"); settings.put("overlayWeight", "900;display:none");
+        settings.put("overlayScale", Double.POSITIVE_INFINITY);
+        OverlayOptions bounded = OverlayOptions.from(settings);
+        assert bounded.clock && bounded.use24Hour && bounded.seconds && bounded.currentDate && bounded.photoDate && bounded.location;
+        assert OverlayOptions.TOP_RIGHT.equals(bounded.position);
+        assert "#FAFAFA".equals(bounded.color) && "sans-serif".equals(bounded.font) && bounded.weight == 300;
+        assert bounded.scale == 100;
+    }
+
+    private static void overlayPositionsAndUnavailableMetadataRenderSafely() throws Exception {
+        String[] positions = {OverlayOptions.TOP_LEFT, OverlayOptions.TOP_RIGHT,
+                OverlayOptions.BOTTOM_LEFT, OverlayOptions.BOTTOM_RIGHT};
+        for (String position : positions) {
+            Map<String, Object> settings = new HashMap<>();
+            settings.put("showClock", true); settings.put("showPhotoDate", true); settings.put("showLocation", true);
+            settings.put("overlayPosition", position);
+            String html = SlideshowHtml.image(new byte[32], "Fit whole photo", OverlayOptions.from(settings),
+                    PhotoMetadata.EMPTY, new Date(0), Locale.US, TimeZone.getTimeZone("UTC"));
+            assert html.contains("class=overlay") && html.contains("class=clock");
+            assert !html.contains("class=meta") && !html.contains("class=location") && !html.contains("class=capture");
+            assert !html.contains(">undefined<") && !html.contains(">null<");
+            if (position.startsWith("Top")) assert html.contains("top:0"); else assert html.contains("bottom:0");
+            if (position.endsWith("left")) assert html.contains("left:0"); else assert html.contains("right:0");
+        }
+        String escaped = SlideshowHtml.message("<img src=x onerror=alert(1)> & \"private\"");
+        assert !escaped.contains("<img src=x") && escaped.contains("&lt;img") && escaped.contains("&amp;");
+    }
+
+    private static void overlayFormattingHooksAreDeterministic() throws Exception {
+        TimeZone utc = TimeZone.getTimeZone("UTC");
+        Date instant = new Date(1718447405000L); // 2024-06-15 10:30:05Z
+        assert "10:30".equals(SlideshowHtml.formatTime(instant, true, false, utc));
+        assert "10:30:05".equals(SlideshowHtml.formatTime(instant, true, true, utc));
+        assert "10:30 AM".equals(SlideshowHtml.formatTime(instant, false, false, utc));
+        assert SlideshowHtml.formatCurrentDate(instant, Locale.US, utc).contains("2024");
+        PhotoMetadata metadata = new PhotoMetadata(instant.getTime(), -37.8136, 144.9631);
+        assert metadata.formattedCaptureDate(Locale.US, utc).contains("2024");
+        assert "37.81360° S, 144.96310° E".equals(metadata.formattedLocation());
+        assert PhotoMetadata.parseAppleDate("2024-06-15T10:30:05Z").equals(instant.getTime());
+        assert PhotoMetadata.parseAppleDate("not a date") == null;
+    }
+
+    private static void extractsBoundedExifMetadataLocally() throws Exception {
+        PhotoMetadata metadata = ExifMetadata.read(syntheticExifJpeg());
+        assert metadata.captureMillis != null;
+        assert Math.abs(metadata.latitude - 37.8083333333) < 0.000001;
+        assert Math.abs(metadata.longitude + 122.4041666667) < 0.000001;
+        assert metadata.formattedLocation().length() < 80;
+        assert ExifMetadata.read(new byte[] {1, 2, 3}).captureMillis == null;
+        byte[] malformed = syntheticExifJpeg();
+        le32(malformed, 12 + 4, Integer.MAX_VALUE);
+        assert ExifMetadata.read(malformed).captureMillis == null;
+        assert new PhotoMetadata(null, 91d, 181d).formattedLocation() == null;
+    }
+
+    private static byte[] syntheticExifJpeg() {
+        byte[] tiff = new byte[178];
+        tiff[0] = 'I'; tiff[1] = 'I'; le16(tiff, 2, 42); le32(tiff, 4, 8);
+        le16(tiff, 8, 2);
+        entry(tiff, 10, 0x8769, 4, 1, 38);
+        entry(tiff, 22, 0x8825, 4, 1, 76);
+        le32(tiff, 34, 0);
+        le16(tiff, 38, 1);
+        entry(tiff, 40, 0x9003, 2, 20, 56);
+        le32(tiff, 52, 0);
+        byte[] date = "2024:06:15 10:30:05\0".getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(date, 0, tiff, 56, date.length);
+        le16(tiff, 76, 4);
+        entryInlineAscii(tiff, 78, 1, 'N');
+        entry(tiff, 90, 2, 5, 3, 130);
+        entryInlineAscii(tiff, 102, 3, 'W');
+        entry(tiff, 114, 4, 5, 3, 154);
+        le32(tiff, 126, 0);
+        rational(tiff, 130, 37, 1); rational(tiff, 138, 48, 1); rational(tiff, 146, 30, 1);
+        rational(tiff, 154, 122, 1); rational(tiff, 162, 24, 1); rational(tiff, 170, 15, 1);
+        byte[] jpeg = new byte[192];
+        jpeg[0] = (byte) 0xff; jpeg[1] = (byte) 0xd8; jpeg[2] = (byte) 0xff; jpeg[3] = (byte) 0xe1;
+        jpeg[4] = 0; jpeg[5] = (byte) 186;
+        byte[] exif = {'E','x','i','f',0,0}; System.arraycopy(exif, 0, jpeg, 6, exif.length);
+        System.arraycopy(tiff, 0, jpeg, 12, tiff.length);
+        jpeg[190] = (byte) 0xff; jpeg[191] = (byte) 0xd9;
+        return jpeg;
+    }
+
+    private static void entry(byte[] out, int at, int tag, int type, int count, int value) {
+        le16(out, at, tag); le16(out, at + 2, type); le32(out, at + 4, count); le32(out, at + 8, value);
+    }
+    private static void entryInlineAscii(byte[] out, int at, int tag, char value) {
+        le16(out, at, tag); le16(out, at + 2, 2); le32(out, at + 4, 2); out[at + 8] = (byte) value;
+    }
+    private static void rational(byte[] out, int at, int numerator, int denominator) {
+        le32(out, at, numerator); le32(out, at + 4, denominator);
+    }
+    private static void le16(byte[] out, int at, int value) { out[at] = (byte) value; out[at + 1] = (byte) (value >>> 8); }
+    private static void le32(byte[] out, int at, int value) {
+        out[at] = (byte) value; out[at + 1] = (byte) (value >>> 8);
+        out[at + 2] = (byte) (value >>> 16); out[at + 3] = (byte) (value >>> 24);
     }
 
     private static void enforcesSafeHostsAndInlineBudget() throws Exception {

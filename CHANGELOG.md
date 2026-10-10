@@ -2,10 +2,16 @@
 
 ## Unreleased
 
-- Prove with a synthetic host test that the plugin publishes its selectable renderer synchronously, before album I/O or configuration.
-- Inspect the packaged DEX to require that the manifest entry class is public and implements the exact SDK `KioskPlugin` interface.
-- Pin and check the current upstream Kiosk Satellite manifest, registration, mode-identity, option-label, and picker-refresh source paths in CI.
-- Document the Kiosk Satellite 2026.10.18 Remote Admin settings-schema refresh limitation and exact reload/on-device workaround. Plugin runtime behavior and package version remain 0.1.3 because the missing remote option is host UI state, not a plugin contract failure.
+## 0.1.4 — 2026-10-10
+
+- Add optional current-time, current-date, photo-capture-date, and photo-location overlays in all four corners; every overlay remains off by default and existing settings are preserved.
+- Mirror the stock small Clock overlay's top-right, 12-hour, no-seconds, no-date, near-white defaults where SDK 1 can express them, while adding explicit 24-hour, seconds, generic font, weight, color, and size controls.
+- Keep current date and photo capture date unambiguous and independently togglable.
+- Read legacy `dateCreated` and CloudKit `assetDate`, with a bounded local JPEG EXIF fallback for capture date and GPS. Location is shown only as sanitized coordinates; no geocoding or third-party request occurs.
+- Add synthetic tests for overlay options, four positions, formatting hooks, escaping, missing metadata, privacy defaults, EXIF bounds, metadata payload shapes, manifest discovery, package inspection, and deterministic output.
+- Retain the v0.1.3 synchronous renderer-discovery proof, exact SDK interface check, and documented Remote Admin refresh workaround.
+
+No GitHub release is created by this source change.
 
 ## 0.1.3 — 2026-10-10
 

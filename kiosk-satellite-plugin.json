@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "apple-shared-album",
   "name": "Apple Shared Album",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "apiVersion": 1,
   "minAndroidSdk": 24,
   "entryClass": "com.darkmatter.kiosk.applealbum.AppleSharedAlbumPlugin",
@@ -57,6 +57,116 @@
       ],
       "group": "Slideshow",
       "description": "Fit keeps the full image on black; fill crops edges to cover the display."
+    },
+    {
+      "key": "showClock",
+      "type": "boolean",
+      "title": "Show clock",
+      "default": false,
+      "group": "Overlay",
+      "description": "Show the device's current local time over each photo. Off by default."
+    },
+    {
+      "key": "overlayPosition",
+      "type": "select",
+      "title": "Overlay position",
+      "default": "Top right",
+      "options": [
+        "Top left",
+        "Top right",
+        "Bottom left",
+        "Bottom right"
+      ],
+      "group": "Overlay",
+      "description": "Place the clock and any enabled photo metadata together in one corner."
+    },
+    {
+      "key": "clock24Hour",
+      "type": "boolean",
+      "title": "24-hour clock",
+      "default": false,
+      "group": "Overlay",
+      "description": "Show current time in 24-hour format instead of AM/PM."
+    },
+    {
+      "key": "clockSeconds",
+      "type": "boolean",
+      "title": "Show seconds",
+      "default": false,
+      "group": "Overlay",
+      "description": "Include seconds in the current-time clock."
+    },
+    {
+      "key": "showCurrentDate",
+      "type": "boolean",
+      "title": "Show current date",
+      "default": false,
+      "group": "Overlay",
+      "description": "Show today's device-local date below the clock. This is not the photo capture date."
+    },
+    {
+      "key": "showPhotoDate",
+      "type": "boolean",
+      "title": "Show photo capture date",
+      "default": false,
+      "group": "Overlay",
+      "description": "Show the photo's capture date when Apple metadata or local image EXIF contains one."
+    },
+    {
+      "key": "showLocation",
+      "type": "boolean",
+      "title": "Show photo location",
+      "default": false,
+      "group": "Overlay",
+      "description": "Show bounded GPS coordinates only when present in downloaded image EXIF. No geocoding or third-party request is made. Off by default for privacy."
+    },
+    {
+      "key": "overlayColor",
+      "type": "color",
+      "title": "Overlay color",
+      "default": "#FAFAFA",
+      "group": "Overlay",
+      "description": "Text color for the clock, current date, and photo metadata."
+    },
+    {
+      "key": "overlayScale",
+      "type": "number",
+      "title": "Overlay size",
+      "default": 100,
+      "min": 50,
+      "max": 150,
+      "step": 5,
+      "unit": "%",
+      "group": "Overlay",
+      "description": "Scale overlay text from 50 to 150 percent."
+    },
+    {
+      "key": "overlayFont",
+      "type": "select",
+      "title": "Font family",
+      "default": "Sans serif",
+      "options": [
+        "Sans serif",
+        "Serif",
+        "Monospace",
+        "Cursive"
+      ],
+      "group": "Overlay",
+      "description": "Use a WebView-safe generic font family; host-bundled Clock fonts are not exposed through SDK 1."
+    },
+    {
+      "key": "overlayWeight",
+      "type": "select",
+      "title": "Font weight",
+      "default": "Light",
+      "options": [
+        "Light",
+        "Regular",
+        "Medium",
+        "Bold"
+      ],
+      "group": "Overlay",
+      "description": "Choose how heavy the overlay text is drawn."
     }
   ],
   "commands": [
@@ -71,6 +181,9 @@
     },
     {
       "title": "Slideshow"
+    },
+    {
+      "title": "Overlay"
     }
   ]
 }

@@ -113,7 +113,9 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
             URI image = pickImage(asset.fields);
             if (image == null) image = pickImage(master.fields);
             if (image != null) {
-                items.add(new AppleAlbumClient.ImageRef(image, asset.id));
+                Long captureMillis = PhotoMetadata.parseAppleDate(fieldValue(asset.fields, "assetDate"));
+                items.add(new AppleAlbumClient.ImageRef(image, asset.id,
+                        new PhotoMetadata(captureMillis, null, null)));
                 if (items.size() > MAX_ITEMS) throw new AlbumException(AlbumException.Code.TOO_LARGE);
             }
         }
@@ -221,6 +223,11 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
     private static String fieldString(Map<String, Object> fields, String key) {
         Map<String, Object> field = SafeJson.object(fields.get(key));
         return field == null ? null : SafeJson.string(field, "value");
+    }
+
+    private static Object fieldValue(Map<String, Object> fields, String key) {
+        Map<String, Object> field = SafeJson.object(fields.get(key));
+        return field == null ? null : field.get("value");
     }
 
     /** Rebuild the query zone from the documented scalar fields; never echo the resolve object. */

@@ -2,9 +2,12 @@ package com.darkmatter.kiosk.applealbum;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.TimeZone;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -34,6 +37,7 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
     private volatile String order = "Shuffle";
     private volatile String fit = "Fit whole photo";
     private volatile long intervalSeconds = DEFAULT_INTERVAL_SECONDS;
+    private volatile OverlayOptions overlay = OverlayOptions.from(null);
     private List<AppleAlbumClient.ImageRef> images = Collections.emptyList();
     private int cursor;
     private long loadedAt;
@@ -98,6 +102,7 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
         order = stringSetting(settings, "order", "Shuffle");
         fit = stringSetting(settings, "fit", "Fit whole photo");
         intervalSeconds = boundedIntervalSeconds(settings == null ? null : settings.get("intervalSeconds"));
+        overlay = OverlayOptions.from(settings);
     }
 
     private void publishInitial() {
@@ -162,9 +167,12 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
                 try {
                     byte[] source = currentClient.image(image, cancel);
                     cancel.check();
+                    PhotoMetadata metadata = image.metadata.withFallback(ExifMetadata.read(source));
                     byte[] display = PhotoEncoder.fit(source);
                     source = null;
-                    String html = SlideshowHtml.image(display, fit);
+                    OverlayOptions currentOverlay = overlay;
+                    String html = SlideshowHtml.image(display, fit, currentOverlay, metadata,
+                            new Date(), Locale.getDefault(), TimeZone.getDefault());
                     display = null;
                     publishIfCurrent(expectedGeneration, html, localImages.size());
                     schedule(intervalSeconds, expectedGeneration);

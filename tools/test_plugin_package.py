@@ -5,6 +5,7 @@ import warnings
 import zipfile
 
 from plugin_package import validate_package_entries
+from plugin_dex import _modified_utf8
 
 
 class PackageEntryTest(unittest.TestCase):
@@ -43,6 +44,9 @@ class PackageEntryTest(unittest.TestCase):
             validate_package_entries(
                 (entry.filename, entry.is_dir()) for entry in archive.infolist()
             )
+
+    def test_dex_modified_utf8_accepts_embedded_nul_and_unicode(self):
+        self.assertEqual(_modified_utf8(b'Exif\xc0\x80\xc2\xb0'), 'Exif\0°')
 
 
 if __name__ == '__main__':

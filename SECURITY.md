@@ -16,5 +16,7 @@ Include the plugin version, Kiosk Satellite version, Android version, URL **form
 - HTTPS and allowlisted Apple host suffixes at input, response-derived endpoints, media references, and every redirect.
 - No cookies, credentials, telemetry, disk photo cache, or exception/server-body logging.
 - Fixed upper bounds on time, redirects, pages, records, items, JSON depth/nodes, metadata bytes, image bytes/dimensions/pixels, and inline output.
+- EXIF parsing is local, JPEG-only, segment-bounded to 64 KiB, entry-count bounded, offset-checked, and limited to capture date and GPS. Coordinates and rendered strings are range/length checked and HTML-escaped.
+- No reverse geocoding or metadata network service; optional capture date and GPS stay in the in-memory renderer and default off.
 - Session generation checks and active-connection cancellation before publication.
 - Fixed user-facing error messages that contain no untrusted values.

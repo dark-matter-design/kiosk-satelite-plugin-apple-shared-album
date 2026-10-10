@@ -50,7 +50,8 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
             Map<String, Object> derivatives = photo == null ? null : SafeJson.object(photo.get("derivatives"));
             if (guid == null || guid.length() > 256 || derivatives == null || isVideo(mediaType, derivatives)) continue;
             String checksum = bestImageChecksum(derivatives);
-            if (checksum != null) plans.add(new Plan(guid, checksum));
+            Long captureMillis = PhotoMetadata.parseAppleDate(photo.get("dateCreated"));
+            if (checksum != null) plans.add(new Plan(guid, checksum, new PhotoMetadata(captureMillis, null, null)));
         }
 
         Map<String, URI> urls = new LinkedHashMap<>();
@@ -86,7 +87,7 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
         List<AppleAlbumClient.ImageRef> result = new ArrayList<>();
         for (Plan plan : plans) {
             URI uri = urls.get(plan.checksum);
-            if (uri != null) result.add(new AppleAlbumClient.ImageRef(uri, plan.guid));
+            if (uri != null) result.add(new AppleAlbumClient.ImageRef(uri, plan.guid, plan.metadata));
         }
         return result;
     }
@@ -159,7 +160,9 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
     }
 
     private static final class Plan {
-        final String guid; final String checksum;
-        Plan(String guid, String checksum) { this.guid = guid; this.checksum = checksum; }
+        final String guid; final String checksum; final PhotoMetadata metadata;
+        Plan(String guid, String checksum, PhotoMetadata metadata) {
+            this.guid = guid; this.checksum = checksum; this.metadata = metadata;
+        }
     }
 }
