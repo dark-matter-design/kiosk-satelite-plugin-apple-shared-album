@@ -39,6 +39,8 @@ All overlay content is off by default. Enable any combination of:
 
 The combined overlay can sit at top left, top right, bottom left, or bottom right. It also offers WebView-safe font family, weight, color, and 50–150% size controls. Text uses a dark vignette and shadow for contrast without changing fit/fill behavior. Clock, current date, capture date, and location remain disabled unless explicitly enabled; location is off by default for privacy.
 
+**Stationary-photo requirement:** use the plugin's **Shift overlay pixels** setting and leave Kiosk Satellite's separate, host-wide **Screensaver > Pixel shift** setting off. At the pinned host version, that global setting applies an outer transform to the complete plugin WebView, which the SDK cannot inspect or cancel, so it can move both photo and overlay. The plugin setting itself never transforms the image or document body.
+
 ## Privacy and security
 
 The kiosk connects directly to Apple. The plugin has no analytics, telemetry, account login, cookies, disk photo cache, or third-party service. Images and album metadata remain in memory and are discarded as sessions change. Optional EXIF inspection is local and bounded; no metadata is logged or sent anywhere.

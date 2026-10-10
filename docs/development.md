@@ -29,7 +29,7 @@ SDK 1 number settings are finite JSON numbers constrained to the manifest's incl
 Before publishing v0.1.5:
 
 1. Install the local ZIP on Kiosk Satellite 2026.10.18 or newer.
-2. Verify start, rotation, fit/fill, refresh, disable, re-enable, URL replacement, all four overlay positions, 12/24-hour and seconds modes, current date, missing metadata behavior, readable contrast on bright/dark fit/fill photos, text-only pixel shift with a stationary photo, and uninstall.
+2. Leave the host-wide **Screensaver > Pixel shift** off, then verify start, rotation, fit/fill, refresh, disable, re-enable, URL replacement, all four overlay positions, 12/24-hour and seconds modes, current date, missing metadata behavior, readable contrast on bright/dark fit/fill photos, text-only plugin pixel shift with a stationary photo, and uninstall. Separately confirm that enabling the host-wide setting moves the outer plugin WebView, as documented, rather than mistaking that host behavior for this plugin's overlay transform.
 3. With owner permission, test one public album of each supported URL format without recording its link, traffic, metadata, or images.
 4. Verify private, invite-only, approval-required, revoked, empty, oversized, slow, and offline states show only sanitized status text. With owner permission only, confirm capture date/location are shown when present and omitted when absent; do not record them.
 5. Confirm disabling or replacing the plugin stops network traffic and a stale image never reappears.
