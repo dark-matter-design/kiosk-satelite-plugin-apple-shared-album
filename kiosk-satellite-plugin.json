@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "apple-shared-album",
   "name": "Apple Shared Album",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "apiVersion": 1,
   "minAndroidSdk": 24,
   "entryClass": "com.darkmatter.kiosk.applealbum.AppleSharedAlbumPlugin",
@@ -10,7 +10,8 @@
   "author": "dark-matter-design",
   "license": "Apache-2.0",
   "capabilities": [
-    "screensaver"
+    "screensaver",
+    "host.read"
   ],
   "settings": [
     {
@@ -26,12 +27,12 @@
       "type": "number",
       "title": "Time per photo",
       "default": 30,
-      "min": 10,
+      "min": 5,
       "max": 300,
       "step": 5,
       "unit": "s",
       "group": "Slideshow",
-      "description": "How long each still image remains visible."
+      "description": "How long each still image remains visible, from 5 seconds to 5 minutes."
     },
     {
       "key": "order",
@@ -45,6 +46,55 @@
       ],
       "group": "Slideshow",
       "description": "Shuffle each pass or preserve Apple's album order in either direction."
+    },
+    {
+      "key": "transition",
+      "type": "select",
+      "title": "Transition",
+      "default": "Fade",
+      "options": [
+        "None",
+        "Fade",
+        "Slide"
+      ],
+      "group": "Slideshow",
+      "description": "Choose how the next photo appears."
+    },
+    {
+      "key": "transitionSeconds",
+      "type": "number",
+      "title": "Transition duration",
+      "default": 1,
+      "min": 0.2,
+      "max": 3,
+      "step": 0.2,
+      "unit": "s",
+      "group": "Slideshow",
+      "description": "How long Fade or Slide takes. Ignored when Transition is None."
+    },
+    {
+      "key": "motion",
+      "type": "select",
+      "title": "Photo motion",
+      "default": "None",
+      "options": [
+        "None",
+        "Ken Burns"
+      ],
+      "group": "Slideshow",
+      "description": "Apply a gentle pan and zoom. Reduced-motion preferences disable animation."
+    },
+    {
+      "key": "refreshMinutes",
+      "type": "number",
+      "title": "Check for album changes",
+      "default": 15,
+      "min": 1,
+      "max": 120,
+      "step": 1,
+      "unit": "min",
+      "group": "Slideshow",
+      "description": "How often to refresh the photo list while this screensaver is active."
     },
     {
       "key": "fit",

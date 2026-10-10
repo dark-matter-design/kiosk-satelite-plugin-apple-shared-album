@@ -23,7 +23,7 @@ The first form uses Apple's legacy `sharedstreams` service. The second uses anon
 3. Enable **Apple Shared Album** and paste the complete public album link.
 4. Under **Screensaver**, select **Apple Shared Album (Apple Shared Album)**.
 
-The settings also control display duration (10–300 seconds), order, and fit versus fill. **Reconnect and refresh album** discards the current list and reconnects immediately. The normal list refresh interval is 15 minutes.
+The settings control display duration (5–300 seconds, 30 seconds by default), order, fit/fill, None/Fade/Slide transitions, transition duration, optional Ken Burns motion, and a 1–120 minute album refresh interval. **Reconnect and refresh album** immediately rechecks the list. Animation respects the renderer's reduced-motion preference.
 
 ## Privacy and security
 
@@ -39,10 +39,10 @@ See [SECURITY.md](SECURITY.md) and [docs/privacy.md](docs/privacy.md) for the th
 
 `AppleAlbumClient` parses the supplied link and chooses one implementation behind a common interface:
 
-- `LegacyProtocol`: `webstream` → bounded 25-item `webasseturls` batches, including Apple's validated HTTP 330 partition handoff.
-- `CloudKitProtocol`: public `records/resolve` → anonymous shared-zone `records/query`, with bounded continuation-marker pagination and repeated-marker rejection.
+- `LegacyProtocol`: `webstream` → bounded 25-item `webasseturls` batches, including Apple's validated HTTP 330 partition handoff and numeric still-image derivative selection.
+- `CloudKitProtocol`: public `records/resolve` → anonymous shared-zone `records/query`, with bounded continuation-marker pagination, repeated-marker rejection, video exclusion, and validated JPEG/original still-image rendition selection.
 
-Both produce validated Apple image references. `SafeHttp` performs native Android HTTPS transport. `PhotoEncoder` bounds native bitmap decoding, scales to at most 1920 px on the longest edge, and emits a JPEG no larger than 360 KiB. `SlideshowHtml` base64-embeds that JPEG in an isolated inline screensaver document and verifies the complete UTF-8 document stays below 512 KiB. Videos and unsupported image renditions are skipped.
+Both produce validated Apple image references. `SafeHttp` performs native Android HTTPS transport. `PhotoEncoder` bounds native bitmap decoding, scales to at most 1920 px on the longest edge, and emits a JPEG no larger than 360 KiB. Transitions use separate bounded incoming/outgoing budgets (260/96 KiB) so `SlideshowHtml` can embed both opaque layers while keeping the complete UTF-8 document below 512 KiB. The plugin observes the host's screen and screensaver states, cancels work while inactive, and resumes without accepting stale publications. Periodic refresh reconciles stable image IDs, preserves the current photo when it remains present, and drops removed references. Videos and unsupported image renditions are skipped.
 
 ## Build and test
 
@@ -55,7 +55,7 @@ python3 tools/inspect_package.py
 python3 tools/audit_repository.py
 ```
 
-The build writes a deterministic versioned ZIP such as `dist/apple-shared-album-0.1.2.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. The ZIP contains exactly the Plugin Manager root files (`kiosk-satellite-plugin.json`, `plugin.jar`, and `LICENSE`) plus any supported `assets/` files; `NOTICE` remains in the repository and is linked below for upstream attribution. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
+The build writes a deterministic versioned ZIP such as `dist/apple-shared-album-0.2.0.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. The ZIP contains exactly the Plugin Manager root files (`kiosk-satellite-plugin.json`, `plugin.jar`, and `LICENSE`) plus any supported `assets/` files; `NOTICE` remains in the repository and is linked below for upstream attribution. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
 
 Tests use only synthetic JSON, fake transport responses, and reserved fake paths. They never contact an album. See [docs/development.md](docs/development.md) for the verification matrix and [docs/research.md](docs/research.md) for source/version/license provenance.
 
@@ -65,7 +65,8 @@ Tests use only synthetic JSON, fake transport responses, and reserved fake paths
 - Still images only; videos and Live Photo motion are skipped.
 - Albums are capped at 1,000 displayable images; CloudKit traversal is capped at 20 pages and 2,500 records.
 - No image is cached on disk. Restarting or refreshing needs network access.
-- Automated tests prove parsing, protocol shaping, safety bounds, pagination, packaging, and compilation with synthetic fixtures. **A maintainer must still install the ZIP on a Kiosk Satellite 2026.10.18+ device and test owner-provided public albums in both URL formats before publishing the first release.** Never put a live album URL in an issue, fixture, CI variable, commit, or log.
+- SDK 1 exposes screen and screensaver activity but no explicit app-foreground event. The plugin pauses on the available state events; Kiosk Satellite separately pauses the renderer WebView when backgrounded.
+- Automated tests prove parsing, protocol shaping, safety bounds, pagination, renderer budgets, lifecycle cancellation, packaging, and compilation with synthetic fixtures. **Before promoting this implementation as a verified stable release, a maintainer must install its ZIP on a Kiosk Satellite 2026.10.18+ device and test owner-provided public albums in both URL formats.** Never put a live album URL in an issue, fixture, CI variable, commit, or log.
 
 ## License
 

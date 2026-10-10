@@ -19,7 +19,9 @@ final class SafeHttp implements AppleAlbumClient.Transport {
     static final int MAX_METADATA_BYTES = 2 * 1024 * 1024;
     static final int MAX_IMAGE_BYTES = 8 * 1024 * 1024;
     private static final int CONNECT_TIMEOUT_MS = 10_000;
-    private static final int READ_TIMEOUT_MS = 20_000;
+    // Large public webstream responses can take more than 20 seconds to be generated after connecting.
+    private static final int METADATA_READ_TIMEOUT_MS = 30_000;
+    private static final int IMAGE_READ_TIMEOUT_MS = 20_000;
     private static final int MAX_REDIRECTS = 3;
     private final Set<HttpURLConnection> active = Collections.newSetFromMap(new ConcurrentHashMap<HttpURLConnection, Boolean>());
 
@@ -49,7 +51,7 @@ final class SafeHttp implements AppleAlbumClient.Transport {
                 active.add(connection);
                 connection.setInstanceFollowRedirects(false);
                 connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
-                connection.setReadTimeout(READ_TIMEOUT_MS);
+                connection.setReadTimeout(limit == MAX_METADATA_BYTES ? METADATA_READ_TIMEOUT_MS : IMAGE_READ_TIMEOUT_MS);
                 connection.setUseCaches(false);
                 connection.setRequestMethod(method);
                 connection.setRequestProperty("Accept", "application/json,image/*;q=0.9,*/*;q=0.1");

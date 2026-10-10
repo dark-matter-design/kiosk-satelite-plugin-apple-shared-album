@@ -22,15 +22,22 @@ public final class AppleAlbumTest {
     public static void main(String[] args) throws Exception {
         parsesOnlySupportedUrls();
         legacyListsSyntheticImages();
+        legacySkipsVideoShapedItemWithoutMediaType();
+        legacyFollowsBodyRedirect();
         legacyRejectsUnsafeRedirectHost();
         cloudKitPaginatesSyntheticRecords();
+        cloudKitParsesReferenceShapedRenditions();
         cloudKitRejectsRepeatedMarker();
         cloudKitRejectsAuthenticationRequired();
+        durationSettingIsBoundedBeforeScheduling();
+        rendererSupportsTransitionsMotionAndBudgets();
+        shuffleAvoidsImmediateCycleRepeat();
         enforcesSafeHostsAndInlineBudget();
         sanitizesEveryPublicError();
         jsonRoundTripsAndBoundsDepth();
         lifecycleCancellationDoesNotWaitForMetadataIo();
-        System.out.println("AppleAlbumTest: 10 checks passed");
+        screenOffCancelsActiveMetadataIo();
+        System.out.println("AppleAlbumTest: 17 checks passed");
     }
 
     private static void parsesOnlySupportedUrls() throws Exception {
@@ -46,16 +53,50 @@ public final class AppleAlbumTest {
     private static void legacyListsSyntheticImages() throws Exception {
         FakeTransport fake = new FakeTransport();
         fake.add(200, "{\"photos\":["
-                + "{\"photoGuid\":\"photo-one\",\"derivatives\":{\"640\":{\"checksum\":\"small\"},\"2048\":{\"checksum\":\"large\"}}},"
-                + "{\"photoGuid\":\"video-one\",\"mediaAssetType\":\"video\",\"derivatives\":{\"720p\":{\"checksum\":\"movie\"}}}]}");
-        fake.add(200, "{\"items\":{\"large\":{\"url_location\":\"cvws.icloud-content.com\",\"url_path\":\"/synthetic/image.jpg\"}}}");
+                + "{\"photoGuid\":\"photo-one\",\"derivatives\":{"
+                + "\"342\":{\"checksum\":\"small\",\"fileSize\":\"43050\",\"width\":\"257\",\"height\":\"342\"},"
+                + "\"2049\":{\"checksum\":\"large\",\"fileSize\":\"985681\",\"width\":\"1537\",\"height\":\"2049\"}}},"
+                + "{\"photoGuid\":\"video-one\",\"mediaAssetType\":\"video\",\"derivatives\":{"
+                + "\"PosterFrame\":{\"checksum\":\"poster\"},\"720p\":{\"checksum\":\"movie\"}}}]}");
+        fake.add(200, "{\"items\":{\"large\":{\"url_location\":\"cvws.icloud-content.com\","
+                + "\"url_path\":\"/synthetic/image.jpg\",\"url_expiry\":\"2099-01-01T00:00:00Z\"}}}");
         AppleAlbumClient client = new AppleAlbumClient(fake);
         List<AppleAlbumClient.ImageRef> images = client.list("https://www.icloud.com/sharedalbum/#B12abcDEF", ACTIVE);
         assert images.size() == 1;
         assert images.get(0).uri.equals(URI.create("https://cvws.icloud-content.com/synthetic/image.jpg"));
+        assert fake.requests.get(0).startsWith("https://p64-sharedstreams.icloud.com/");
         assert fake.requests.get(0).endsWith("/webstream");
         assert fake.requests.get(1).endsWith("/webasseturls");
         assert fake.bodies.get(1).contains("photo-one") && !fake.bodies.get(1).contains("video-one");
+    }
+
+    private static void legacySkipsVideoShapedItemWithoutMediaType() throws Exception {
+        FakeTransport fake = new FakeTransport();
+        fake.add(200, "{\"photos\":["
+                + "{\"photoGuid\":\"still\",\"derivatives\":{\"2049\":{\"checksum\":\"still-large\"}}},"
+                + "{\"photoGuid\":\"video\",\"derivatives\":{\"PosterFrame\":{\"checksum\":\"poster\"},"
+                + "\"720p\":{\"checksum\":\"movie\"}}}]}");
+        fake.add(200, "{\"items\":{\"still-large\":{\"url_location\":\"cvws.icloud-content.com\","
+                + "\"url_path\":\"/synthetic/still.jpg\"}}}");
+        List<AppleAlbumClient.ImageRef> images = new AppleAlbumClient(fake)
+                .list("https://www.icloud.com/sharedalbum/#D20v3Co2e_yw_F4H", ACTIVE);
+        assert images.size() == 1;
+        assert fake.requests.get(0).startsWith("https://p124-sharedstreams.icloud.com/");
+        assert !fake.bodies.get(1).contains("video");
+    }
+
+    private static void legacyFollowsBodyRedirect() throws Exception {
+        FakeTransport fake = new FakeTransport();
+        fake.add(330, "{\"X-Apple-MMe-Host\":\"p42-sharedstreams.icloud.com\"}");
+        fake.add(200, "{\"photos\":[{\"photoGuid\":\"still\","
+                + "\"derivatives\":{\"2049\":{\"checksum\":\"large\"}}}]}");
+        fake.add(200, "{\"items\":{\"large\":{\"url_location\":\"cvws.icloud-content.com\","
+                + "\"url_path\":\"/synthetic/redirected.jpg\"}}}");
+        List<AppleAlbumClient.ImageRef> images = new AppleAlbumClient(fake)
+                .list("https://www.icloud.com/sharedalbum/#B12abcDEF", ACTIVE);
+        assert images.size() == 1;
+        assert fake.requests.get(1).startsWith("https://p42-sharedstreams.icloud.com/");
+        assert fake.requests.get(2).startsWith("https://p42-sharedstreams.icloud.com/");
     }
 
     private static void legacyRejectsUnsafeRedirectHost() throws Exception {
@@ -87,6 +128,36 @@ public final class AppleAlbumTest {
         assert fake.requests.get(1).contains("publicAccessAuthToken=synthetic-access");
     }
 
+    private static void cloudKitParsesReferenceShapedRenditions() throws Exception {
+        FakeTransport fake = new FakeTransport();
+        fake.add(200, "{\"results\":[{\"shortGUID\":{\"value\":\"OPAQUE_123\"},"
+                + "\"zoneID\":{\"zoneName\":\"CMM-SYNTHETIC\",\"ownerRecordName\":\"_synthetic-owner\","
+                + "\"zoneType\":\"REGULAR_CUSTOM_ZONE\"},\"anonymousPublicAccess\":{"
+                + "\"databasePartition\":\"https://p164-ckdatabasews.icloud.com:443\","
+                + "\"token\":\"synthetic access/+\"},\"rootRecord\":{\"recordType\":\"CMMRoot\"}}]}");
+        fake.add(200, "{\"records\":["
+                + "{\"recordType\":\"CPLAsset\",\"fields\":{\"assetDate\":{\"value\":1}}},"
+                + "{\"recordType\":\"CPLMaster\",\"recordName\":\"heic-master\",\"fields\":{"
+                + "\"itemType\":{\"value\":\"public.heic\"},\"resOriginalFileType\":{\"value\":\"public.heic\"},"
+                + "\"resOriginalRes\":{\"value\":{\"downloadURL\":\"https://cvws.icloud-content.com/synthetic/original.heic\"}},"
+                + "\"resJPEGScreenRes\":{\"value\":{\"downloadURL\":\"https://cvws.icloud-content.com/synthetic/heic.jpg\"}},"
+                + "\"resJPEGScreenWidth\":{\"value\":\"1536\"}}},"
+                + "{\"recordType\":\"CPLMaster\",\"recordName\":\"jpeg-master\",\"fields\":{"
+                + "\"itemType\":{\"value\":\"public.jpeg\"},\"resOriginalFileType\":{\"value\":\"public.jpeg\"},"
+                + "\"resOriginalRes\":{\"value\":{\"downloadURL\":\"https://cvws.icloud-content.com/synthetic/original.jpg\"}}}},"
+                + "{\"recordType\":\"CPLMaster\",\"recordName\":\"video-without-type\",\"fields\":{"
+                + "\"resVidMedRes\":{\"value\":{\"downloadURL\":\"https://cvws.icloud-content.com/synthetic/video.mp4\"}},"
+                + "\"resJPEGMedRes\":{\"value\":{\"downloadURL\":\"https://cvws.icloud-content.com/synthetic/poster.jpg\"}}}}]}");
+        List<AppleAlbumClient.ImageRef> images = new AppleAlbumClient(fake)
+                .list("https://photos.icloud.com/shared/album/OPAQUE_123", ACTIVE);
+        assert images.size() == 2;
+        assert images.get(0).uri.equals(URI.create("https://cvws.icloud-content.com/synthetic/heic.jpg"));
+        assert images.get(1).uri.equals(URI.create("https://cvws.icloud-content.com/synthetic/original.jpg"));
+        assert fake.requests.get(1).startsWith("https://p164-ckdatabasews.icloud.com:443/");
+        assert fake.requests.get(1).contains("publicAccessAuthToken=synthetic+access%2F%2B");
+        assert fake.bodies.get(1).contains("REGULAR_CUSTOM_ZONE");
+    }
+
     private static void cloudKitRejectsRepeatedMarker() throws Exception {
         FakeTransport fake = new FakeTransport();
         fake.add(200, "{\"results\":[{\"zoneID\":{\"zoneName\":\"synthetic-zone\"},"
@@ -106,6 +177,51 @@ public final class AppleAlbumTest {
             new AppleAlbumClient(fake).list("https://photos.icloud.com/shared/album/OPAQUE_123", ACTIVE);
             throw new AssertionError("authenticated album accepted");
         } catch (AlbumException expected) { assert expected.code == AlbumException.Code.NOT_PUBLIC; }
+    }
+
+    private static void durationSettingIsBoundedBeforeScheduling() {
+        assert AppleSharedAlbumPlugin.boundedIntervalSeconds(null) == 30;
+        assert AppleSharedAlbumPlugin.boundedIntervalSeconds("300") == 30;
+        assert AppleSharedAlbumPlugin.boundedIntervalSeconds(Double.NaN) == 30;
+        assert AppleSharedAlbumPlugin.boundedIntervalSeconds(Double.POSITIVE_INFINITY) == 30;
+        assert AppleSharedAlbumPlugin.boundedIntervalSeconds(Long.MIN_VALUE) == 5;
+        assert AppleSharedAlbumPlugin.boundedIntervalSeconds(17.6d) == 20;
+        assert AppleSharedAlbumPlugin.boundedIntervalSeconds(300) == 300;
+        assert AppleSharedAlbumPlugin.boundedIntervalSeconds(1800L) == 300;
+        assert AppleSharedAlbumPlugin.boundedIntervalSeconds(Long.MAX_VALUE) == 300;
+        assert AppleSharedAlbumPlugin.boundedNumber(0.1, 1, 0.2, 3, 0.2) == 0.2;
+        assert AppleSharedAlbumPlugin.boundedNumber(4, 1, 0.2, 3, 0.2) == 3.0;
+    }
+
+    private static void rendererSupportsTransitionsMotionAndBudgets() throws Exception {
+        byte[] incoming = new byte[PhotoEncoder.TRANSITION_INCOMING_BYTES];
+        byte[] outgoing = new byte[PhotoEncoder.TRANSITION_OUTGOING_BYTES];
+        String fade = SlideshowHtml.image(incoming, outgoing, "Fit whole photo", "Fade", 1.2, "Ken Burns", 30);
+        assert fade.contains("object-fit:contain");
+        assert fade.contains("incoming fade motion");
+        assert fade.contains("prefers-reduced-motion:reduce");
+        assert fade.contains("outgoing");
+        assert fade.getBytes(StandardCharsets.UTF_8).length < SlideshowHtml.SDK_INLINE_LIMIT;
+        String slide = SlideshowHtml.image(new byte[1024], new byte[1024], "Fill screen", "Slide", 0.2, "None", 5);
+        assert slide.contains("object-fit:cover");
+        assert slide.contains("incoming slide");
+        String none = SlideshowHtml.image(new byte[PhotoEncoder.SINGLE_IMAGE_BYTES], null,
+                "Fit whole photo", "None", 1, "None", 30);
+        assert !none.contains("outgoing\"");
+        try {
+            SlideshowHtml.image(new byte[300 * 1024], new byte[120 * 1024],
+                    "Fit whole photo", "Fade", 1, "None", 30);
+            throw new AssertionError("oversized two-image document accepted");
+        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.TOO_LARGE; }
+    }
+
+    private static void shuffleAvoidsImmediateCycleRepeat() throws Exception {
+        List<AppleAlbumClient.ImageRef> refs = new ArrayList<>();
+        refs.add(new AppleAlbumClient.ImageRef(URI.create("https://cvws.icloud-content.com/synthetic/a.jpg"), "a"));
+        refs.add(new AppleAlbumClient.ImageRef(URI.create("https://cvws.icloud-content.com/synthetic/b.jpg"), "b"));
+        refs.add(new AppleAlbumClient.ImageRef(URI.create("https://cvws.icloud-content.com/synthetic/c.jpg"), "c"));
+        AppleSharedAlbumPlugin.shuffleAvoidingFirst(refs, "a", new java.util.Random(4));
+        assert !refs.get(0).id.equals("a");
     }
 
     private static void enforcesSafeHostsAndInlineBudget() throws Exception {
@@ -161,6 +277,21 @@ public final class AppleAlbumTest {
         assert elapsedMillis < 500 : "stop waited for metadata I/O: " + elapsedMillis + " ms";
     }
 
+    private static void screenOffCancelsActiveMetadataIo() throws Exception {
+        BlockingTransport transport = new BlockingTransport();
+        AppleSharedAlbumPlugin plugin = new AppleSharedAlbumPlugin(transport);
+        Map<String, Object> settings = new HashMap<>();
+        settings.put("albumUrl", "https://www.icloud.com/sharedalbum/#B12abcDEF");
+        plugin.start(new ReadableFakeHost(), settings);
+        assert transport.entered.await(2, TimeUnit.SECONDS) : "metadata request did not start";
+        Map<String, Object> payload = new HashMap<>(); payload.put("on", Boolean.FALSE);
+        plugin.onEvent("ks.screen.state", payload);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        while (!transport.cancelled && System.nanoTime() < deadline) Thread.sleep(10);
+        assert transport.cancelled : "screen-off did not cancel active transport";
+        plugin.stop();
+    }
+
     private static void rejectsUrl(String value) throws Exception {
         try { AlbumUrl.parse(value); throw new AssertionError("invalid URL accepted"); }
         catch (AlbumException expected) { assert expected.code == AlbumException.Code.INVALID_URL; }
@@ -213,7 +344,14 @@ public final class AppleAlbumTest {
         @Override public void cancelAll() { cancelled = true; }
     }
 
-    private static final class FakeHost implements PluginHost {
+    private static final class ReadableFakeHost extends FakeHost {
+        @Override public void subscribe(String event) { }
+        @Override public void executeCommand(String command, Map<String, Object> arguments, CommandCallback callback) {
+            callback.onResult(true, Boolean.TRUE, null);
+        }
+    }
+
+    private static class FakeHost implements PluginHost {
         @Override public void publishScreensaver(String key, String title, String html) { }
         @Override public void removeScreensaver(String key) { }
         @Override public void status(String message, boolean error) { }

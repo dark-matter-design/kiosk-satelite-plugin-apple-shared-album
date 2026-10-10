@@ -2,9 +2,11 @@ package com.darkmatter.kiosk.applealbum;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Original bounded implementation of Apple's legacy sharedstreams public protocol. */
 final class LegacyProtocol implements AppleAlbumClient.Protocol {
@@ -40,7 +42,7 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
             String guid = SafeJson.string(photo, "photoGuid");
             String mediaType = SafeJson.string(photo, "mediaAssetType");
             Map<String, Object> derivatives = photo == null ? null : SafeJson.object(photo.get("derivatives"));
-            if (guid == null || guid.length() > 256 || derivatives == null || "video".equalsIgnoreCase(mediaType)) continue;
+            if (guid == null || guid.length() > 256 || derivatives == null || isVideo(mediaType, derivatives)) continue;
             String checksum = bestImageChecksum(derivatives);
             if (checksum != null) plans.add(new Plan(guid, checksum));
         }
@@ -49,7 +51,12 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
         for (int offset = 0; offset < plans.size(); offset += BATCH) {
             cancel.check();
             List<Object> guids = new ArrayList<>();
-            for (int i = offset; i < Math.min(plans.size(), offset + BATCH); i++) guids.add(plans.get(i).guid);
+            Set<String> requestedChecksums = new HashSet<>();
+            for (int i = offset; i < Math.min(plans.size(), offset + BATCH); i++) {
+                Plan plan = plans.get(i);
+                guids.add(plan.guid);
+                requestedChecksums.add(plan.checksum);
+            }
             Map<String, Object> request = new LinkedHashMap<>(); request.put("photoGuids", guids);
             AppleAlbumClient.Response response = transport.post(base.resolve("webasseturls"), SafeJson.encode(request), cancel);
             requirePublicSuccess(response);
@@ -57,6 +64,7 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
             Map<String, Object> items = assetRoot == null ? null : SafeJson.object(assetRoot.get("items"));
             if (items == null) throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
             for (Map.Entry<String, Object> entry : items.entrySet()) {
+                if (!requestedChecksums.contains(entry.getKey())) continue;
                 Map<String, Object> item = SafeJson.object(entry.getValue());
                 String host = SafeJson.string(item, "url_location");
                 String path = SafeJson.string(item, "url_path");
@@ -87,19 +95,33 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
     private static String bestImageChecksum(Map<String, Object> derivatives) {
         String best = null; double bestScore = -1;
         for (Map.Entry<String, Object> entry : derivatives.entrySet()) {
-            if ("PosterFrame".equals(entry.getKey()) || entry.getKey().toLowerCase().contains("video")) continue;
+            String key = entry.getKey();
+            if (!key.matches("[0-9]+")) continue;
             Map<String, Object> derivative = SafeJson.object(entry.getValue());
             String checksum = SafeJson.string(derivative, "checksum");
             if (checksum == null || checksum.length() > 256) continue;
-            double score;
-            try { score = Double.parseDouble(entry.getKey()); }
-            catch (NumberFormatException ignored) {
-                Object fileSize = derivative.get("fileSize");
-                score = fileSize instanceof Number ? ((Number) fileSize).doubleValue() / 1_000_000d : 0;
-            }
+            double score = number(key);
+            if (score < 0) score = number(derivative.get("fileSize"));
             if (score > bestScore) { bestScore = score; best = checksum; }
         }
         return best;
+    }
+
+    private static boolean isVideo(String mediaType, Map<String, Object> derivatives) {
+        if (mediaType != null) return "video".equalsIgnoreCase(mediaType);
+        for (String key : derivatives.keySet()) {
+            if ("PosterFrame".equalsIgnoreCase(key) || key.matches("(?i)[0-9]+p")) return true;
+        }
+        return false;
+    }
+
+    /** Apple encodes derivative dimensions and byte counts as either JSON numbers or decimal strings. */
+    private static double number(Object raw) {
+        try {
+            double value = raw instanceof Number ? ((Number) raw).doubleValue()
+                    : raw instanceof String ? Double.parseDouble((String) raw) : -1;
+            return Double.isFinite(value) && value >= 0 ? value : -1;
+        } catch (NumberFormatException ignored) { return -1; }
     }
 
     private static URI baseUri(String token) throws AlbumException {

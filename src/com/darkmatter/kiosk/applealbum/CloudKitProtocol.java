@@ -17,6 +17,9 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
     private static final int MAX_PAGES = 20;
     private static final int MAX_RECORDS = 2500;
     private static final int MAX_ITEMS = 1000;
+    private static final int MAX_ZONE_NAME_LENGTH = 256;
+    private static final int MAX_OWNER_NAME_LENGTH = 256;
+    private static final String REGULAR_ZONE = "REGULAR_CUSTOM_ZONE";
     private final AppleAlbumClient.Transport transport;
 
     CloudKitProtocol(AppleAlbumClient.Transport transport) { this.transport = transport; }
@@ -35,10 +38,11 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
         List<Object> results = root == null ? null : SafeJson.array(root.get("results"));
         Map<String, Object> result = results == null || results.isEmpty() ? null : SafeJson.object(results.get(0));
         Map<String, Object> access = result == null ? null : SafeJson.object(result.get("anonymousPublicAccess"));
-        Map<String, Object> zone = result == null ? null : SafeJson.object(result.get("zoneID"));
-        if (result == null || access == null || zone == null || SafeJson.bool(result, "requiresAuthentication")) {
+        Map<String, Object> rawZone = result == null ? null : SafeJson.object(result.get("zoneID"));
+        if (result == null || access == null || rawZone == null || SafeJson.bool(result, "requiresAuthentication")) {
             throw new AlbumException(AlbumException.Code.NOT_PUBLIC);
         }
+        Map<String, Object> zone = queryZone(rawZone);
         String partition = SafeJson.string(access, "databasePartition");
         String accessToken = SafeJson.string(access, "token");
         if (partition == null || accessToken == null || accessToken.length() > 4096) {
@@ -101,17 +105,32 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
 
     private static boolean isVideo(Map<String, Object> fields) {
         String itemType = fieldString(fields, "itemType");
-        if (itemType == null) return false;
-        itemType = itemType.toLowerCase();
-        return itemType.contains("movie") || itemType.contains("video") || itemType.contains("mpeg-4");
+        if (itemType != null && !itemType.isEmpty()) {
+            itemType = itemType.toLowerCase();
+            return itemType.contains("movie") || itemType.contains("video") || itemType.contains("mpeg-4");
+        }
+        // Older records can omit itemType. In that case only an actual video rendition is evidence of video.
+        for (String key : fields.keySet()) if (key.startsWith("resVid") && key.endsWith("Res")) return true;
+        return false;
     }
 
     private static URI pickImage(Map<String, Object> fields) {
-        String[] preferred = {"resJPEGFullRes", "resJPEGMedRes", "resJPEGThumbRes"};
+        String[] preferred = {"resJPEGFullRes", "resJPEGMedRes", "resJPEGSmallRes", "resJPEGThumbRes"};
         for (String key : preferred) {
             URI uri = renditionUri(fields, key);
             if (uri != null) return uri;
         }
+        // Apple has added other resJPEG*Res names over time. Accept only JPEG renditions here;
+        // video tracks and arbitrary CloudKit asset fields remain excluded.
+        URI fallback = null; double fallbackWidth = -1;
+        for (String key : fields.keySet()) {
+            if (!key.startsWith("resJPEG") || !key.endsWith("Res")) continue;
+            URI uri = renditionUri(fields, key);
+            if (uri == null) continue;
+            double width = fieldNumber(fields, key.substring(0, key.length() - 3) + "Width");
+            if (fallback == null || width > fallbackWidth) { fallback = uri; fallbackWidth = width; }
+        }
+        if (fallback != null) return fallback;
         String originalType = fieldString(fields, "resOriginalFileType");
         if ("public.jpeg".equals(originalType) || "public.png".equals(originalType)
                 || "org.webmproject.webp".equals(originalType) || "com.compuserve.gif".equals(originalType)) {
@@ -133,5 +152,46 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
     private static String fieldString(Map<String, Object> fields, String key) {
         Map<String, Object> field = SafeJson.object(fields.get(key));
         return field == null ? null : SafeJson.string(field, "value");
+    }
+
+    /** Rebuild the query zone from the documented scalar fields; never echo the resolve object. */
+    private static Map<String, Object> queryZone(Map<String, Object> raw) throws AlbumException {
+        String zoneName = boundedZoneString(raw, "zoneName", MAX_ZONE_NAME_LENGTH, true);
+        String ownerName = boundedZoneString(raw, "ownerRecordName", MAX_OWNER_NAME_LENGTH, false);
+        String zoneType = boundedZoneString(raw, "zoneType", REGULAR_ZONE.length(), false);
+        if (zoneType != null && !REGULAR_ZONE.equals(zoneType)) {
+            throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
+        }
+        Map<String, Object> zone = new LinkedHashMap<>();
+        zone.put("zoneName", zoneName);
+        if (ownerName != null) zone.put("ownerRecordName", ownerName);
+        if (zoneType != null) zone.put("zoneType", zoneType);
+        return zone;
+    }
+
+    private static String boundedZoneString(Map<String, Object> raw, String key, int maxLength, boolean required)
+            throws AlbumException {
+        Object value = raw.get(key);
+        if (value == null && !required) return null;
+        if (!(value instanceof String) || ((String) value).isEmpty() || ((String) value).length() > maxLength) {
+            throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
+        }
+        return (String) value;
+    }
+
+    private static double fieldNumber(Map<String, Object> fields, String key) {
+        Map<String, Object> field = SafeJson.object(fields.get(key));
+        Object value = field == null ? null : field.get("value");
+        if (value instanceof Number) {
+            double number = ((Number) value).doubleValue();
+            return Double.isFinite(number) && number >= 0 ? number : -1;
+        }
+        if (value instanceof String) {
+            try {
+                double number = Double.parseDouble((String) value);
+                return Double.isFinite(number) && number >= 0 ? number : -1;
+            } catch (NumberFormatException ignored) { }
+        }
+        return -1;
     }
 }

@@ -8,6 +8,14 @@ from plugin_manifest import build_manifest
 
 
 class BuildManifestTest(unittest.TestCase):
+    def test_project_duration_setting_matches_runtime_contract(self):
+        manifest = json.loads((Path(__file__).resolve().parents[1] / 'kiosk-satellite-plugin.json').read_text())
+        duration = next(setting for setting in manifest['settings'] if setting['key'] == 'intervalSeconds')
+        self.assertEqual(
+            {key: duration[key] for key in ('type', 'default', 'min', 'max', 'step', 'unit')},
+            {'type': 'number', 'default': 30, 'min': 5, 'max': 300, 'step': 5, 'unit': 's'},
+        )
+
     def test_release_version_overrides_source_without_editing_it(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'kiosk-satellite-plugin.json'
