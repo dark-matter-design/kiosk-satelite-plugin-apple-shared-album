@@ -13,6 +13,7 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
     private static final String BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     private static final int MAX_ITEMS = 1000;
     private static final int BATCH = 25;
+    private static final int MAX_PARTITION_REDIRECTS = 3;
     private final AppleAlbumClient.Transport transport;
 
     LegacyProtocol(AppleAlbumClient.Transport transport) { this.transport = transport; }
@@ -20,11 +21,16 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
     @Override public List<AppleAlbumClient.ImageRef> list(String token, AppleAlbumClient.Cancellation cancel) throws AlbumException {
         URI base = baseUri(token);
         AppleAlbumClient.Response stream = transport.post(base.resolve("webstream"), "{\"streamCtag\":null}", cancel);
-        if (stream.status == 330) {
+        Set<String> redirectHosts = new HashSet<>();
+        for (int redirects = 0; stream.status == 330; redirects++) {
+            if (redirects >= MAX_PARTITION_REDIRECTS) throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
             String host = stream.headers.get("x-apple-mme-host");
             if (host == null) {
                 Map<String, Object> redirect = SafeJson.object(SafeJson.parse(stream.body));
                 host = SafeJson.string(redirect, "X-Apple-MMe-Host");
+            }
+            if (host == null || !redirectHosts.add(host.toLowerCase(java.util.Locale.ROOT))) {
+                throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
             }
             base = redirectedBase(host, token);
             stream = transport.post(base.resolve("webstream"), "{\"streamCtag\":null}", cancel);
@@ -108,7 +114,11 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
     }
 
     private static boolean isVideo(String mediaType, Map<String, Object> derivatives) {
-        if (mediaType != null) return "video".equalsIgnoreCase(mediaType);
+        if (mediaType != null) {
+            String lower = mediaType.toLowerCase(java.util.Locale.ROOT);
+            if (lower.contains("video") || lower.contains("movie") || lower.contains("quicktime")
+                    || lower.contains("mpeg-4")) return true;
+        }
         for (String key : derivatives.keySet()) {
             if ("PosterFrame".equalsIgnoreCase(key) || key.matches("(?i)[0-9]+p")) return true;
         }

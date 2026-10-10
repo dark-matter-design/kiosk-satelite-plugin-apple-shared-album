@@ -52,9 +52,13 @@ with tempfile.TemporaryDirectory(prefix='kiosk-plugin-') as temp:
     # The overlay classes use Android views, so the SDK compiles against the platform too.
     subprocess.run([java_tool('javac'), '--release', '8', '-cp', str(platform), '-d', str(sdk_classes), *map(str, sorted((ROOT / 'sdk/src').rglob('*.java')))], check=True)
     sdk_jar = out / 'kiosk-plugin-sdk-1.jar'
-    subprocess.run([java_tool('jar'), 'cf', str(sdk_jar), '-C', str(sdk_classes), '.'], check=True)
+    subprocess.run([java_tool('jar'), '--create', '--file', str(sdk_jar),
+                    '--date=2020-01-01T00:00:00Z', '-C', str(sdk_classes), '.'], check=True)
     subprocess.run([java_tool('javac'), '--release', '8', '-cp', os.pathsep.join([str(sdk_jar), str(platform)]), '-d', str(classes), *map(str, sorted((plugin / 'src').rglob('*.java')))], check=True)
-    subprocess.run([str(build_tools[-1]), '--min-api', str(manifest['minAndroidSdk']), '--lib', str(platform), '--classpath', str(sdk_jar), '--output', str(dex), *map(str, sorted(classes.rglob('*.class')))], check=True)
+    subprocess.run([str(build_tools[-1]), '--release', '--thread-count', '1',
+                    '--min-api', str(manifest['minAndroidSdk']), '--lib', str(platform),
+                    '--classpath', str(sdk_jar), '--output', str(dex),
+                    *map(str, sorted(classes.rglob('*.class')))], check=True)
     jar = temp / 'plugin.jar'
     def add(archive, name, data):
         info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))

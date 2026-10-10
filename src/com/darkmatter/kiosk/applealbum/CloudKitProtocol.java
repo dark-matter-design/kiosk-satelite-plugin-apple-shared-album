@@ -12,7 +12,7 @@ import java.util.Set;
 
 /** Original bounded implementation of the anonymous public CloudKit album flow. */
 final class CloudKitProtocol implements AppleAlbumClient.Protocol {
-    private static final URI RESOLVE = URI.create("https://ckdatabasews.icloud.com/database/1/com.apple.photos.cloud/production/public/records/resolve?remapEnums=true");
+    private static final String RESOLVE_BASE = "https://ckdatabasews.icloud.com/database/1/com.apple.photos.cloud/production/public/records/resolve?remapEnums=true&getCurrentSyncToken=true&sharing_url_key=";
     private static final String RECORD_TYPE = "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted";
     private static final int MAX_PAGES = 20;
     private static final int MAX_RECORDS = 2500;
@@ -25,11 +25,12 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
     CloudKitProtocol(AppleAlbumClient.Transport transport) { this.transport = transport; }
 
     @Override public List<AppleAlbumClient.ImageRef> list(String token, AppleAlbumClient.Cancellation cancel) throws AlbumException {
+        String encodedShare = encode(token);
         Map<String, Object> shortGuid = new LinkedHashMap<>();
         shortGuid.put("value", token); shortGuid.put("shouldFetchRootRecord", Boolean.TRUE);
         List<Object> shortGuids = new ArrayList<>(); shortGuids.add(shortGuid);
         Map<String, Object> resolveRequest = new LinkedHashMap<>(); resolveRequest.put("shortGUIDs", shortGuids);
-        AppleAlbumClient.Response resolve = transport.post(RESOLVE, SafeJson.encode(resolveRequest), cancel);
+        AppleAlbumClient.Response resolve = transport.post(URI.create(RESOLVE_BASE + encodedShare), SafeJson.encode(resolveRequest), cancel);
         if (resolve.status == 401 || resolve.status == 403 || resolve.status == 404 || resolve.status == 410) {
             throw new AlbumException(AlbumException.Code.NOT_PUBLIC);
         }
@@ -39,7 +40,8 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
         Map<String, Object> result = results == null || results.isEmpty() ? null : SafeJson.object(results.get(0));
         Map<String, Object> access = result == null ? null : SafeJson.object(result.get("anonymousPublicAccess"));
         Map<String, Object> rawZone = result == null ? null : SafeJson.object(result.get("zoneID"));
-        if (result == null || access == null || rawZone == null || SafeJson.bool(result, "requiresAuthentication")) {
+        if (result == null || access == null || rawZone == null || SafeJson.bool(result, "requiresAuthentication")
+                || SafeJson.bool(result, "requireAppleLogin") || SafeJson.string(result, "serverErrorCode") != null) {
             throw new AlbumException(AlbumException.Code.NOT_PUBLIC);
         }
         Map<String, Object> zone = queryZone(rawZone);
@@ -52,12 +54,12 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
         try { base = URI.create(partition.endsWith("/") ? partition : partition + "/"); }
         catch (RuntimeException error) { throw new AlbumException(AlbumException.Code.INVALID_RESPONSE); }
         SafeHttp.validateAppleUri(base);
-        String encodedToken;
-        try { encodedToken = URLEncoder.encode(accessToken, StandardCharsets.UTF_8.name()); }
-        catch (Exception impossible) { throw new AlbumException(AlbumException.Code.INVALID_RESPONSE); }
-        URI queryUri = base.resolve("database/1/com.apple.photos.cloud/production/shared/records/query?remapEnums=true&getCurrentSyncToken=true&publicAccessAuthToken=" + encodedToken);
+        String encodedToken = encode(accessToken);
+        URI queryUri = base.resolve("database/1/com.apple.photos.cloud/production/shared/records/query?remapEnums=true&getCurrentSyncToken=true&sharing_url_key="
+                + encodedShare + "&publicAccessAuthToken=" + encodedToken);
 
-        List<AppleAlbumClient.ImageRef> items = new ArrayList<>();
+        Map<String, Master> masters = new LinkedHashMap<>();
+        List<Asset> assets = new ArrayList<>();
         Set<String> markers = new HashSet<>();
         String marker = null;
         int recordCount = 0;
@@ -85,21 +87,47 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
             if (recordCount > MAX_RECORDS) throw new AlbumException(AlbumException.Code.TOO_LARGE);
             for (Object rawRecord : records) {
                 Map<String, Object> record = SafeJson.object(rawRecord);
-                if (!"CPLMaster".equals(SafeJson.string(record, "recordType"))) continue;
                 Map<String, Object> fields = record == null ? null : SafeJson.object(record.get("fields"));
-                if (fields == null || isVideo(fields)) continue;
-                URI image = pickImage(fields);
-                if (image != null) {
-                    String id = SafeJson.string(record, "recordName");
-                    items.add(new AppleAlbumClient.ImageRef(image, id));
-                    if (items.size() > MAX_ITEMS) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+                String type = SafeJson.string(record, "recordType");
+                String id = boundedId(SafeJson.string(record, "recordName"));
+                if (fields == null || id == null) continue;
+                if ("CPLMaster".equals(type)) {
+                    masters.put(id, new Master(id, fields));
+                } else if ("CPLAsset".equals(type)) {
+                    String masterId = referencedRecordName(fields, "masterRef");
+                    if (masterId != null) assets.add(new Asset(id, masterId, fields));
                 }
             }
             marker = SafeJson.string(pageRoot, "continuationMarker");
-            if (marker == null || marker.isEmpty()) return items;
+            if (marker == null || marker.isEmpty()) { marker = null; break; }
             if (marker.length() > 4096 || !markers.add(marker)) throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
         }
         if (marker != null) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+
+        List<AppleAlbumClient.ImageRef> items = new ArrayList<>();
+        Set<String> referencedMasters = new HashSet<>();
+        for (Asset asset : assets) {
+            Master master = masters.get(asset.masterId);
+            referencedMasters.add(asset.masterId);
+            if (master == null || isVideo(asset.fields) || isVideo(master.fields)) continue;
+            URI image = pickImage(asset.fields);
+            if (image == null) image = pickImage(master.fields);
+            if (image != null) {
+                items.add(new AppleAlbumClient.ImageRef(image, asset.id));
+                if (items.size() > MAX_ITEMS) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+            }
+        }
+        // Some older/synthetic query variants return masters without their CPLAsset partner.
+        // Keep that compatible fallback after preferring the asset/master pairing used by
+        // current Shared Collections (edited renditions can live on CPLAsset).
+        for (Master master : masters.values()) {
+            if (referencedMasters.contains(master.id) || isVideo(master.fields)) continue;
+            URI image = pickImage(master.fields);
+            if (image != null) {
+                items.add(new AppleAlbumClient.ImageRef(image, master.id));
+                if (items.size() > MAX_ITEMS) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+            }
+        }
         return items;
     }
 
@@ -110,7 +138,10 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
             return itemType.contains("movie") || itemType.contains("video") || itemType.contains("mpeg-4");
         }
         // Older records can omit itemType. In that case only an actual video rendition is evidence of video.
-        for (String key : fields.keySet()) if (key.startsWith("resVid") && key.endsWith("Res")) return true;
+        for (String key : fields.keySet()) {
+            String lower = key.toLowerCase(java.util.Locale.ROOT);
+            if (lower.startsWith("res") && lower.contains("vid") && lower.endsWith("res")) return true;
+        }
         return false;
     }
 
@@ -120,11 +151,11 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
             URI uri = renditionUri(fields, key);
             if (uri != null) return uri;
         }
-        // Apple has added other resJPEG*Res names over time. Accept only JPEG renditions here;
-        // video tracks and arbitrary CloudKit asset fields remain excluded.
+        // Apple has added other resJPEG*Res names over time. Accept those plus
+        // explicitly web-safe image resources; video and HEIC originals stay excluded.
         URI fallback = null; double fallbackWidth = -1;
         for (String key : fields.keySet()) {
-            if (!key.startsWith("resJPEG") || !key.endsWith("Res")) continue;
+            if (!isImageResource(fields, key)) continue;
             URI uri = renditionUri(fields, key);
             if (uri == null) continue;
             double width = fieldNumber(fields, key.substring(0, key.length() - 3) + "Width");
@@ -145,8 +176,46 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
         String raw = SafeJson.string(value, "downloadURL");
         if (raw == null || raw.length() > 8192) return null;
         try {
+            // Current CloudKit payloads use a filename template in signed media URLs.
+            // URI rejects the literal braces, and requesting an encoded template does not
+            // address the asset, so substitute a fixed non-sensitive filename first.
+            raw = raw.replace("${f}", "photo.jpg").replaceAll("(?i)%24%7Bf%7D", "photo.jpg");
             URI uri = URI.create(raw); SafeHttp.validateAppleUri(uri); return uri;
         } catch (Exception ignored) { return null; }
+    }
+
+    private static boolean isImageResource(Map<String, Object> fields, String key) {
+        if (key == null || !key.startsWith("res") || !key.endsWith("Res")) return false;
+        String lower = key.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("vid")) return false;
+        if (key.startsWith("resJPEG")) return true;
+        String prefix = key.substring(0, key.length() - 3);
+        String type = fieldString(fields, prefix + "FileType");
+        if (type == null && "resOriginal".equals(prefix)) type = fieldString(fields, "resOriginalFileType");
+        return isWebSafeImageType(type);
+    }
+
+    private static boolean isWebSafeImageType(String type) {
+        return "public.jpeg".equals(type) || "public.png".equals(type)
+                || "org.webmproject.webp".equals(type) || "com.compuserve.gif".equals(type);
+    }
+
+    private static String referencedRecordName(Map<String, Object> fields, String key) {
+        Map<String, Object> field = SafeJson.object(fields.get(key));
+        Object rawValue = field == null ? null : field.get("value");
+        Map<String, Object> value = SafeJson.object(rawValue);
+        String id = value == null ? (rawValue instanceof String ? (String) rawValue : null)
+                : SafeJson.string(value, "recordName");
+        return boundedId(id);
+    }
+
+    private static String boundedId(String id) {
+        return id == null || id.isEmpty() || id.length() > 512 ? null : id;
+    }
+
+    private static String encode(String value) throws AlbumException {
+        try { return URLEncoder.encode(value, StandardCharsets.UTF_8.name()); }
+        catch (Exception impossible) { throw new AlbumException(AlbumException.Code.INVALID_RESPONSE); }
     }
 
     private static String fieldString(Map<String, Object> fields, String key) {
@@ -193,5 +262,17 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
             } catch (NumberFormatException ignored) { }
         }
         return -1;
+    }
+
+    private static final class Master {
+        final String id; final Map<String, Object> fields;
+        Master(String id, Map<String, Object> fields) { this.id = id; this.fields = fields; }
+    }
+
+    private static final class Asset {
+        final String id; final String masterId; final Map<String, Object> fields;
+        Asset(String id, String masterId, Map<String, Object> fields) {
+            this.id = id; this.masterId = masterId; this.fields = fields;
+        }
     }
 }
