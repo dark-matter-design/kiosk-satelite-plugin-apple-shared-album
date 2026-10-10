@@ -65,7 +65,7 @@ Tests use only synthetic JSON, fake transport responses, and reserved fake paths
 - Still images only; videos and Live Photo motion are skipped.
 - Albums are capped at 1,000 displayable images; CloudKit traversal is capped at 20 pages and 2,500 records.
 - No image is cached on disk. Restarting or refreshing needs network access.
-- Automated tests prove parsing, protocol shaping, safety bounds, pagination, packaging, and compilation with synthetic fixtures. **A maintainer must still install the ZIP on a Kiosk Satellite 2026.10.18+ device and test owner-provided public albums in both URL formats before publishing the first release.** Never put a live album URL in an issue, fixture, CI variable, commit, or log.
+- Automated tests prove parsing, protocol shaping, safety bounds, pagination, packaging, and compilation with synthetic fixtures. **A maintainer must still install the ZIP on a Kiosk Satellite 2026.10.18+ device and test owner-provided public albums in both URL formats before publishing v0.1.3.** Never put a live album URL in an issue, fixture, CI variable, commit, or log.
 
 ## License
 

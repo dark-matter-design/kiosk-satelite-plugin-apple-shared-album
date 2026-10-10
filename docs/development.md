@@ -19,7 +19,7 @@ SDK 1 number settings are finite JSON numbers constrained to the manifest's incl
 
 ## Manual device gate
 
-Before publishing the first release:
+Before publishing v0.1.3:
 
 1. Install the local ZIP on Kiosk Satellite 2026.10.18 or newer.
 2. Verify start, rotation, fit/fill, refresh, disable, re-enable, URL replacement, and uninstall.
