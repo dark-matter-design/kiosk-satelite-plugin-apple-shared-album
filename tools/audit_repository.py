@@ -19,7 +19,7 @@ secret_patterns = [
 ]
 legacy_link = re.compile(r'https://(?:www\.)?icloud\.com/sharedalbum/#([A-Za-z0-9_-]{6,128})')
 current_link = re.compile(r'https://photos\.icloud\.com/shared/album/([A-Za-z0-9_-]{6,128})')
-allowed_examples = {'TOKEN', 'OPAQUE_ID', 'B12abcDEF', 'OPAQUE_123'}
+allowed_examples = {'TOKEN', 'OPAQUE_ID', 'B12abcDEF', 'D20v3Co2e_yw_F4H', 'OPAQUE_123'}
 
 problems = []
 for relative in tracked:
