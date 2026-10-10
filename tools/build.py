@@ -20,6 +20,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('plugin', nargs='?', default=str(ROOT), help='Path to the plugin repository')
 parser.add_argument('--version', help='Package version override, normally supplied by the release tag')
 parser.add_argument('--android-platform', help='Installed platform version, for example 35 or 37.0')
+parser.add_argument('--build-tools', default='35.0.0', help='Exact Android build-tools version (default: 35.0.0)')
 args = parser.parse_args()
 plugin = Path(args.plugin).resolve()
 try:
@@ -35,9 +36,9 @@ sdk_root = Path(os.environ.get('ANDROID_HOME', os.environ.get('ANDROID_SDK_ROOT'
 java_root = os.environ.get('JAVA_HOME')
 def java_tool(name):
     return str(Path(java_root) / 'bin' / name) if java_root else name
-build_tools = sorted((sdk_root / 'build-tools').glob('*/d8'), key=lambda p: tuple(int(v) for v in p.parent.name.split('.') if v.isdigit()))
-if not build_tools:
-    raise SystemExit('Set ANDROID_HOME to an Android SDK with build-tools installed.')
+d8 = sdk_root / 'build-tools' / args.build_tools / 'd8'
+if not d8.is_file():
+    raise SystemExit(f'Install Android build-tools {args.build_tools}; expected {d8}.')
 try:
     platform = android_platform(sdk_root, args.android_platform)
 except ValueError as error:
@@ -55,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix='kiosk-plugin-') as temp:
     subprocess.run([java_tool('jar'), '--create', '--file', str(sdk_jar),
                     '--date=2020-01-01T00:00:00Z', '-C', str(sdk_classes), '.'], check=True)
     subprocess.run([java_tool('javac'), '--release', '8', '-cp', os.pathsep.join([str(sdk_jar), str(platform)]), '-d', str(classes), *map(str, sorted((plugin / 'src').rglob('*.java')))], check=True)
-    subprocess.run([str(build_tools[-1]), '--release', '--thread-count', '1',
+    subprocess.run([str(d8), '--release', '--thread-count', '1',
                     '--min-api', str(manifest['minAndroidSdk']), '--lib', str(platform),
                     '--classpath', str(sdk_jar), '--output', str(dex),
                     *map(str, sorted(classes.rglob('*.class')))], check=True)

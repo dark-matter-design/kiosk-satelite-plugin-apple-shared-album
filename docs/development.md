@@ -2,7 +2,7 @@
 
 ## Toolchain
 
-The current upstream template workflow uses Ubuntu 24.04, `actions/checkout@v4`, `actions/setup-java@v4` with Temurin 21, `android-actions/setup-android@v4`, Android platform 35, and build-tools 35.0.0. The builder compiles Java with `javac --release 8`, targets manifest `minAndroidSdk` 24, and runs D8 with `--min-api 24`. Python 3 is required; upstream does not pin its patch version.
+The current upstream template workflow uses Ubuntu 24.04, `actions/checkout@v4`, `actions/setup-java@v4` with Temurin 21, `android-actions/setup-android@v4`, Android platform 35, and build-tools 35.0.0. The builder compiles Java with `javac --release 8`, targets manifest `minAndroidSdk` 24, and runs the exact build-tools 35.0.0 D8 with `--min-api 24`; `--build-tools VERSION` is available for intentional toolchain changes. Python 3 is required; upstream does not pin its patch version.
 
 ## Local verification
 

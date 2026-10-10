@@ -9,6 +9,7 @@
 - Keep current date and photo capture date unambiguous and independently togglable.
 - Read legacy `dateCreated` and CloudKit `assetDate`, with a bounded local JPEG EXIF fallback for capture date and GPS. Location is shown only as sanitized coordinates; no geocoding or third-party request occurs.
 - Add synthetic tests for overlay options, four positions, formatting hooks, escaping, missing metadata, privacy defaults, EXIF bounds, metadata payload shapes, manifest discovery, package inspection, and deterministic output.
+- Pin packaging to Android build-tools 35.0.0 instead of whichever D8 is newest on the host, so the documented local and CI toolchains produce identical output.
 - Retain the v0.1.3 synchronous renderer-discovery proof, exact SDK interface check, and documented Remote Admin refresh workaround.
 
 No GitHub release is created by this source change.
