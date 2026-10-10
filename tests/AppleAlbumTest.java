@@ -1,5 +1,6 @@
 package com.darkmatter.kiosk.applealbum;
 
+import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
@@ -25,15 +26,18 @@ public final class AppleAlbumTest {
     public static void main(String[] args) throws Exception {
         parsesOnlySupportedUrls();
         legacyListsSyntheticImages();
+        legacyHandlesSeventyPhotosInBoundedBatches();
         legacySkipsVideoShapedItemWithoutMediaType();
         legacyFollowsBodyRedirect();
         legacyRejectsUnsafeRedirectHost();
         cloudKitPaginatesSyntheticRecords();
         cloudKitParsesReferenceShapedRenditions();
         cloudKitParsesCurrentPairedTemplateRenditions();
+        cloudKitHandlesSeventyRealisticPhotosInOneBoundedPage();
         cloudKitRejectsOversizedZone();
         cloudKitRejectsRepeatedMarker();
         cloudKitRejectsAuthenticationRequired();
+        protocolPageAndBatchCapsRemainBounded();
         durationSettingIsBoundedBeforeScheduling();
         overlayOptionsAreBoundedAndPrivateByDefault();
         overlayPositionsAndUnavailableMetadataRenderSafely();
@@ -41,11 +45,13 @@ public final class AppleAlbumTest {
         overlayFormattingHooksAreDeterministic();
         extractsBoundedExifMetadataLocally();
         enforcesSafeHostsAndInlineBudget();
+        separatesBoundedReadDecodeAndOutputFailures();
+        retriesASmallerRenditionAfterLargeImageFailure();
         sanitizesEveryPublicError();
         jsonRoundTripsAndBoundsDepth();
         publishesSelectableScreensaverBeforeAlbumIo();
         lifecycleCancellationDoesNotWaitForMetadataIo();
-        System.out.println("AppleAlbumTest: 22 checks passed");
+        System.out.println("AppleAlbumTest: 27 checks passed");
     }
 
     private static void parsesOnlySupportedUrls() throws Exception {
@@ -77,6 +83,42 @@ public final class AppleAlbumTest {
         assert fake.requests.get(0).endsWith("/webstream");
         assert fake.requests.get(1).endsWith("/webasseturls");
         assert fake.bodies.get(1).contains("photo-one") && !fake.bodies.get(1).contains("video-one");
+    }
+
+    private static void legacyHandlesSeventyPhotosInBoundedBatches() throws Exception {
+        FakeTransport fake = new FakeTransport();
+        StringBuilder stream = new StringBuilder("{\"photos\":[");
+        for (int i = 0; i < 70; i++) {
+            if (i > 0) stream.append(',');
+            stream.append("{\"photoGuid\":\"photo-").append(i).append("\",\"dateCreated\":\"2024-06-15T10:30:00Z\",\"derivatives\":{")
+                    .append("\"342\":{\"checksum\":\"small-").append(i).append("\",\"fileSize\":\"45000\",\"width\":\"257\",\"height\":\"342\"},")
+                    .append("\"2049\":{\"checksum\":\"screen-").append(i).append("\",\"fileSize\":\"950000\",\"width\":\"1537\",\"height\":\"2049\"},")
+                    .append("\"4032\":{\"checksum\":\"oversized-").append(i).append("\",\"fileSize\":\"12500000\",\"width\":\"3024\",\"height\":\"4032\"}}}");
+        }
+        fake.add(200, stream.append("]}").toString());
+        for (int batch = 0; batch < 3; batch++) {
+            int from = batch * 25, to = Math.min(70, from + 25);
+            StringBuilder items = new StringBuilder("{\"items\":{");
+            boolean comma = false;
+            for (int i = from; i < to; i++) {
+                for (String size : new String[] {"screen", "small"}) {
+                    if (comma) items.append(',');
+                    comma = true;
+                    items.append('\"').append(size).append('-').append(i).append("\":{\"url_location\":\"cvws.icloud-content.com\",\"url_path\":\"/synthetic/")
+                            .append(size).append('-').append(i).append(".jpg\"}");
+                }
+            }
+            fake.add(200, items.append("}}").toString());
+        }
+        List<AppleAlbumClient.ImageRef> images = new AppleAlbumClient(fake)
+                .list("https://www.icloud.com/sharedalbum/#B12abcDEF", ACTIVE);
+        assert images.size() == 70;
+        assert fake.requests.size() == 4 : "expected stream plus three 25-photo batches";
+        assert images.get(0).uri.toASCIIString().endsWith("/screen-0.jpg");
+        assert images.get(0).renditions.size() == 2;
+        for (int request = 1; request < fake.bodies.size(); request++) {
+            assert !fake.bodies.get(request).contains("oversized-");
+        }
     }
 
     private static void legacySkipsVideoShapedItemWithoutMediaType() throws Exception {
@@ -209,6 +251,76 @@ public final class AppleAlbumTest {
         assert fake.requests.get(1).contains("publicAccessAuthToken=synthetic+access%2F%2B");
     }
 
+    private static void cloudKitHandlesSeventyRealisticPhotosInOneBoundedPage() throws Exception {
+        FakeTransport fake = new FakeTransport();
+        fake.add(200, "{\"results\":[{\"zoneID\":{\"zoneName\":\"CMM-SYNTHETIC\","
+                + "\"ownerRecordName\":\"_synthetic-owner\",\"zoneType\":\"REGULAR_CUSTOM_ZONE\"},"
+                + "\"anonymousPublicAccess\":{\"databasePartition\":\"https://p164-ckdatabasews.icloud.com:443\","
+                + "\"token\":\"synthetic-access\"}}]}");
+        String page = realisticCloudKitPage(70);
+        assert page.getBytes(StandardCharsets.UTF_8).length > 2 * 1024 * 1024
+                : "fixture must reproduce the former 2 MiB response failure";
+        assert page.getBytes(StandardCharsets.UTF_8).length < SafeHttp.MAX_METADATA_BYTES;
+        fake.add(200, page);
+        List<AppleAlbumClient.ImageRef> images = new AppleAlbumClient(fake)
+                .list("https://photos.icloud.com/shared/album/OPAQUE_123", ACTIVE);
+        assert images.size() == 70;
+        assert fake.bodies.get(1).contains("\"resultsLimit\":100");
+        assert images.get(0).uri.toASCIIString().contains("/Screen/");
+        assert images.get(0).renditions.size() == 4;
+        assert !images.get(0).uri.toASCIIString().contains("/Full/");
+    }
+
+    private static String realisticCloudKitPage(int photos) {
+        StringBuilder out = new StringBuilder("{\"records\":[");
+        String signature = repeat('s', 1800);
+        for (int i = 0; i < photos; i++) {
+            if (i > 0) out.append(',');
+            cloudKitRecord(out, "CPLAsset", "asset-" + i, "master-" + i, i, signature);
+            out.append(',');
+            cloudKitRecord(out, "CPLMaster", "master-" + i, null, i, signature);
+        }
+        return out.append("]}").toString();
+    }
+
+    private static void cloudKitRecord(StringBuilder out, String type, String id, String master, int index,
+            String signature) {
+        out.append("{\"recordType\":\"").append(type).append("\",\"recordName\":\"").append(id)
+                .append("\",\"recordChangeTag\":\"synthetic-change-tag\",\"fields\":{");
+        if (master != null) {
+            out.append("\"masterRef\":{\"value\":{\"recordName\":\"").append(master)
+                    .append("\",\"action\":\"NONE\"}},\"assetDate\":{\"value\":1718447400000},");
+        }
+        out.append("\"itemType\":{\"value\":\"public.jpeg\"},\"filenameEnc\":{\"value\":\"IMG_")
+                .append(index).append(".JPG\"},\"orientation\":{\"value\":1},\"favorite\":{\"value\":false},")
+                .append("\"hidden\":{\"value\":false},\"resOriginalFileType\":{\"value\":\"public.jpeg\"}");
+        String[] names = {"Full", "Large", "Med", "Screen", "Display", "Preview", "Small", "Thumb"};
+        int[] widths = {4032, 2560, 2048, 1920, 1536, 1280, 1024, 342};
+        int[] sizes = {12500000, 2400000, 1200000, 850000, 600000, 450000, 280000, 45000};
+        for (int r = 0; r < names.length; r++) {
+            String prefix = "resJPEG" + names[r];
+            out.append(",\"").append(prefix).append("Res\":{\"value\":{")
+                    .append("\"downloadURL\":\"https://cvws.icloud-content.com/synthetic/").append(type).append('/')
+                    .append(index).append('/').append(names[r]).append("/photo-${f}?sig=").append(signature).append("\",")
+                    .append("\"size\":").append(sizes[r]).append(",\"fileChecksum\":\"synthetic-checksum\",")
+                    .append("\"wrappingKey\":\"synthetic-wrap\",\"referenceChecksum\":\"synthetic-reference\",")
+                    .append("\"protectionInfo\":\"synthetic-protection\",\"receipt\":\"synthetic-receipt\",")
+                    .append("\"assetKey\":\"synthetic-key\",\"downloadToken\":\"synthetic-token\",")
+                    .append("\"fileSignature\":\"synthetic-signature\",\"encryptionKey\":\"synthetic-encryption\",")
+                    .append("\"referenceType\":\"ASSETID\"}},\"").append(prefix).append("Width\":{\"value\":")
+                    .append(widths[r]).append("},\"").append(prefix).append("Height\":{\"value\":")
+                    .append(Math.max(1, widths[r] * 3 / 4)).append("},\"").append(prefix)
+                    .append("FileType\":{\"value\":\"public.jpeg\"}");
+        }
+        out.append("}}");
+    }
+
+    private static String repeat(char value, int count) {
+        StringBuilder out = new StringBuilder(count);
+        for (int i = 0; i < count; i++) out.append(value);
+        return out.toString();
+    }
+
     private static void cloudKitRejectsOversizedZone() throws Exception {
         FakeTransport fake = new FakeTransport();
         StringBuilder oversized = new StringBuilder();
@@ -241,6 +353,34 @@ public final class AppleAlbumTest {
             new AppleAlbumClient(fake).list("https://photos.icloud.com/shared/album/OPAQUE_123", ACTIVE);
             throw new AssertionError("authenticated album accepted");
         } catch (AlbumException expected) { assert expected.code == AlbumException.Code.NOT_PUBLIC; }
+    }
+
+    private static void protocolPageAndBatchCapsRemainBounded() throws Exception {
+        FakeTransport cloud = new FakeTransport();
+        cloud.add(200, "{\"results\":[{\"zoneID\":{\"zoneName\":\"synthetic-zone\"},"
+                + "\"anonymousPublicAccess\":{\"databasePartition\":\"https://p99-ckdatabasews.icloud.com\","
+                + "\"token\":\"synthetic-access\"}}]}");
+        StringBuilder records = new StringBuilder("{\"records\":[");
+        for (int i = 0; i < 201; i++) { if (i > 0) records.append(','); records.append("null"); }
+        cloud.add(200, records.append("]}").toString());
+        try {
+            new AppleAlbumClient(cloud).list("https://photos.icloud.com/shared/album/OPAQUE_123", ACTIVE);
+            throw new AssertionError("oversized CloudKit page accepted");
+        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.METADATA_TOO_LARGE; }
+
+        FakeTransport legacy = new FakeTransport();
+        legacy.add(200, "{\"photos\":[{\"photoGuid\":\"one\",\"derivatives\":{"
+                + "\"2049\":{\"checksum\":\"requested\",\"fileSize\":\"950000\"}}}]}");
+        StringBuilder items = new StringBuilder("{\"items\":{");
+        for (int i = 0; i < 251; i++) {
+            if (i > 0) items.append(',');
+            items.append("\"item-").append(i).append("\":{}");
+        }
+        legacy.add(200, items.append("}}").toString());
+        try {
+            new AppleAlbumClient(legacy).list("https://www.icloud.com/sharedalbum/#B12abcDEF", ACTIVE);
+            throw new AssertionError("oversized legacy asset batch accepted");
+        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.METADATA_TOO_LARGE; }
     }
 
     private static void durationSettingIsBoundedBeforeScheduling() {
@@ -498,7 +638,45 @@ public final class AppleAlbumTest {
         try {
             SlideshowHtml.image(new byte[400 * 1024], "Fill screen");
             throw new AssertionError("oversized inline document accepted");
-        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.TOO_LARGE; }
+        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.OUTPUT_TOO_LARGE; }
+    }
+
+    private static void separatesBoundedReadDecodeAndOutputFailures() throws Exception {
+        try {
+            SafeHttp.readBounded(new ByteArrayInputStream(new byte[9]), 8,
+                    AlbumException.Code.IMAGE_TOO_LARGE, ACTIVE);
+            throw new AssertionError("oversized image read accepted");
+        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.IMAGE_TOO_LARGE; }
+        try {
+            SafeHttp.readBounded(new ByteArrayInputStream(new byte[9]), 8,
+                    AlbumException.Code.METADATA_TOO_LARGE, ACTIVE);
+            throw new AssertionError("oversized metadata read accepted");
+        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.METADATA_TOO_LARGE; }
+        PhotoEncoder.validateSourceBounds(8000, 8000);
+        try {
+            PhotoEncoder.validateSourceBounds(8001, 8000);
+            throw new AssertionError("decoded pixel bomb accepted");
+        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.DECODE_TOO_LARGE; }
+        try {
+            PhotoEncoder.validateSourceBounds(20001, 1);
+            throw new AssertionError("oversized source edge accepted");
+        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.DECODE_TOO_LARGE; }
+        assert AppleAlbumClient.retryWithSmallerRendition(AlbumException.Code.IMAGE_TOO_LARGE);
+        assert AppleAlbumClient.retryWithSmallerRendition(AlbumException.Code.DECODE_TOO_LARGE);
+        assert AppleAlbumClient.retryWithSmallerRendition(AlbumException.Code.OUTPUT_TOO_LARGE);
+        assert !AppleAlbumClient.retryWithSmallerRendition(AlbumException.Code.NETWORK);
+        assert !AppleAlbumClient.retryWithSmallerRendition(AlbumException.Code.CANCELLED);
+    }
+
+    private static void retriesASmallerRenditionAfterLargeImageFailure() throws Exception {
+        RenditionFallbackTransport transport = new RenditionFallbackTransport();
+        AppleAlbumClient client = new AppleAlbumClient(transport);
+        List<URI> renditions = new ArrayList<>();
+        renditions.add(URI.create("https://cvws.icloud-content.com/synthetic/large.jpg"));
+        renditions.add(URI.create("https://cvws.icloud-content.com/synthetic/safe.jpg"));
+        byte[] image = client.image(new AppleAlbumClient.ImageRef(renditions, "synthetic", PhotoMetadata.EMPTY), ACTIVE);
+        assert image.length == 3 && transport.requests.size() == 2;
+        assert transport.requests.get(1).toASCIIString().endsWith("/safe.jpg");
     }
 
     private static void sanitizesEveryPublicError() {
@@ -522,7 +700,7 @@ public final class AppleAlbumTest {
         try {
             SafeJson.parse(deep.toString().getBytes(StandardCharsets.UTF_8));
             throw new AssertionError("deep JSON accepted");
-        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.TOO_LARGE; }
+        } catch (AlbumException expected) { assert expected.code == AlbumException.Code.METADATA_TOO_LARGE; }
     }
 
     private static void lifecycleCancellationDoesNotWaitForMetadataIo() throws Exception {
@@ -573,6 +751,21 @@ public final class AppleAlbumTest {
         }
         @Override public AppleAlbumClient.Response getImage(URI uri, AppleAlbumClient.Cancellation cancel) {
             throw new AssertionError("unexpected image request");
+        }
+        @Override public void cancelAll() { }
+    }
+
+    private static final class RenditionFallbackTransport implements AppleAlbumClient.Transport {
+        final List<URI> requests = new ArrayList<>();
+        @Override public AppleAlbumClient.Response post(URI uri, String json, AppleAlbumClient.Cancellation cancel) {
+            throw new AssertionError("unexpected metadata request");
+        }
+        @Override public AppleAlbumClient.Response getImage(URI uri, AppleAlbumClient.Cancellation cancel)
+                throws AlbumException {
+            cancel.check(); requests.add(uri);
+            if (requests.size() == 1) throw new AlbumException(AlbumException.Code.IMAGE_TOO_LARGE);
+            Map<String, String> headers = new HashMap<>(); headers.put("content-type", "image/jpeg");
+            return new AppleAlbumClient.Response(200, headers, new byte[] {1, 2, 3}, uri);
         }
         @Override public void cancelAll() { }
     }

@@ -16,7 +16,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 final class SafeHttp implements AppleAlbumClient.Transport {
-    static final int MAX_METADATA_BYTES = 2 * 1024 * 1024;
+    // A response is parsed one page/batch at a time. Four MiB admits realistic public-album
+    // metadata while keeping the raw bytes, UTF-16 JSON text, and bounded parse tree finite.
+    static final int MAX_METADATA_BYTES = 4 * 1024 * 1024;
     static final int MAX_IMAGE_BYTES = 8 * 1024 * 1024;
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     // Large public webstream responses can take more than 20 seconds to be generated after connecting.
@@ -26,11 +28,13 @@ final class SafeHttp implements AppleAlbumClient.Transport {
     private final Set<HttpURLConnection> active = Collections.newSetFromMap(new ConcurrentHashMap<HttpURLConnection, Boolean>());
 
     @Override public AppleAlbumClient.Response post(URI uri, String json, AppleAlbumClient.Cancellation cancel) throws AlbumException {
-        return request("POST", uri, json.getBytes(StandardCharsets.UTF_8), MAX_METADATA_BYTES, cancel);
+        return request("POST", uri, json.getBytes(StandardCharsets.UTF_8), MAX_METADATA_BYTES,
+                METADATA_READ_TIMEOUT_MS, AlbumException.Code.METADATA_TOO_LARGE, cancel);
     }
 
     @Override public AppleAlbumClient.Response getImage(URI uri, AppleAlbumClient.Cancellation cancel) throws AlbumException {
-        return request("GET", uri, null, MAX_IMAGE_BYTES, cancel);
+        return request("GET", uri, null, MAX_IMAGE_BYTES,
+                IMAGE_READ_TIMEOUT_MS, AlbumException.Code.IMAGE_TOO_LARGE, cancel);
     }
 
     @Override public void cancelAll() {
@@ -38,7 +42,7 @@ final class SafeHttp implements AppleAlbumClient.Transport {
     }
 
     private AppleAlbumClient.Response request(String originalMethod, URI originalUri, byte[] body, int limit,
-            AppleAlbumClient.Cancellation cancel) throws AlbumException {
+            int readTimeoutMs, AlbumException.Code tooLarge, AppleAlbumClient.Cancellation cancel) throws AlbumException {
         URI uri = originalUri;
         String method = originalMethod;
         byte[] requestBody = body;
@@ -51,7 +55,7 @@ final class SafeHttp implements AppleAlbumClient.Transport {
                 active.add(connection);
                 connection.setInstanceFollowRedirects(false);
                 connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
-                connection.setReadTimeout(limit == MAX_METADATA_BYTES ? METADATA_READ_TIMEOUT_MS : IMAGE_READ_TIMEOUT_MS);
+                connection.setReadTimeout(readTimeoutMs);
                 connection.setUseCaches(false);
                 connection.setRequestMethod(method);
                 connection.setRequestProperty("Accept", "application/json,image/*;q=0.9,*/*;q=0.1");
@@ -72,9 +76,9 @@ final class SafeHttp implements AppleAlbumClient.Transport {
                     continue;
                 }
                 long declared = connection.getContentLengthLong();
-                if (declared > limit) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+                if (declared > limit) throw new AlbumException(tooLarge);
                 InputStream input = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-                byte[] responseBody = input == null ? new byte[0] : readBounded(input, limit, cancel);
+                byte[] responseBody = input == null ? new byte[0] : readBounded(input, limit, tooLarge, cancel);
                 Map<String, String> headers = new LinkedHashMap<>();
                 for (Map.Entry<String, List<String>> entry : connection.getHeaderFields().entrySet()) {
                     if (entry.getKey() != null && entry.getValue() != null && !entry.getValue().isEmpty()) {
@@ -94,14 +98,15 @@ final class SafeHttp implements AppleAlbumClient.Transport {
         throw new AlbumException(AlbumException.Code.NETWORK);
     }
 
-    private static byte[] readBounded(InputStream input, int limit, AppleAlbumClient.Cancellation cancel) throws Exception {
+    static byte[] readBounded(InputStream input, int limit, AlbumException.Code tooLarge,
+            AppleAlbumClient.Cancellation cancel) throws Exception {
         try (InputStream source = input; ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(limit, 64 * 1024))) {
             byte[] buffer = new byte[16 * 1024];
             int total = 0;
             for (int read; (read = source.read(buffer)) != -1;) {
                 cancel.check();
                 total += read;
-                if (total > limit) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+                if (total > limit) throw new AlbumException(tooLarge);
                 output.write(buffer, 0, read);
             }
             return output.toByteArray();

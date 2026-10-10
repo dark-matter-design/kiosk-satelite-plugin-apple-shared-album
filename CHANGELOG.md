@@ -4,6 +4,11 @@
 
 ## 0.1.5 — 2026-10-10
 
+- Fix normal albums around 70 photos being reported under the former combined “album response or image” size error. A realistic paired CloudKit regression is larger than the former 2 MiB response ceiling, while a 70-photo legacy regression completes in three bounded 25-photo asset batches.
+- Request 100 CloudKit records per page, enforce 200 records per returned page, and raise the page ceiling from 20 to 25 only to preserve the existing 2,500-record total under the smaller requested page size. Keep the 1,000-image total limit and repeated-marker rejection.
+- Raise the per-response metadata ceiling from 2 MiB to 4 MiB and JSON value ceiling from 20,000 to 50,000. Parsing remains per response; raw UTF-8 and Java UTF-16 input are bounded to approximately 4 MiB and 8 MiB respectively before the independent node/page/batch/record/item caps.
+- Prefer screen-sized 1280–2560 px renditions, exclude resources declared above the unchanged 8 MiB image cap, keep at most four candidates, and retry a lower candidate only when a download breaches that cap. Retain the 20,000 px/64-megapixel decode limits, 360 KiB rendered JPEG limit, and 512 KiB inline document limit.
+- Replace the ambiguous size error with fixed, non-diagnostic metadata-response, image-download, decoded-image, and display-output messages.
 - Add an explicit, off-by-default overlay pixel-shift setting. Only the overlay container moves; the photo element and its fit/fill transform remain stationary.
 - Match the relevant stock Kiosk Satellite safeguards with a one-minute interval, a deterministic per-axis maximum of 10 px, a 28 px overlay inset, all four anchors, bounded layout, and timer teardown when the inline document leaves the page.
 - Add synthetic regressions that separately inspect the image CSS and shift script, proving that transform writes target only `.overlay`, along with amplitude, interval, inset, anchor, disabled-state, and lifecycle checks.

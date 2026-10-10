@@ -4,6 +4,8 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,9 +16,13 @@ import java.util.Set;
 final class CloudKitProtocol implements AppleAlbumClient.Protocol {
     private static final String RESOLVE_BASE = "https://ckdatabasews.icloud.com/database/1/com.apple.photos.cloud/production/public/records/resolve?remapEnums=true&getCurrentSyncToken=true&sharing_url_key=";
     private static final String RECORD_TYPE = "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted";
-    private static final int MAX_PAGES = 20;
+    private static final int PAGE_RESULTS_LIMIT = 100;
+    private static final int MAX_RECORDS_PER_PAGE = 200;
+    private static final int MAX_PAGES = 25;
     private static final int MAX_RECORDS = 2500;
     private static final int MAX_ITEMS = 1000;
+    private static final int MAX_RENDITIONS = 4;
+    private static final double TARGET_EDGE = 1920;
     private static final int MAX_ZONE_NAME_LENGTH = 256;
     private static final int MAX_OWNER_NAME_LENGTH = 256;
     private static final String REGULAR_ZONE = "REGULAR_CUSTOM_ZONE";
@@ -73,7 +79,7 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
             Map<String, Object> query = new LinkedHashMap<>();
             query.put("recordType", RECORD_TYPE); query.put("filterBy", filters);
             Map<String, Object> body = new LinkedHashMap<>();
-            body.put("query", query); body.put("zoneID", zone); body.put("resultsLimit", 200);
+            body.put("query", query); body.put("zoneID", zone); body.put("resultsLimit", PAGE_RESULTS_LIMIT);
             if (marker != null) body.put("continuationMarker", marker);
             AppleAlbumClient.Response response = transport.post(queryUri, SafeJson.encode(body), cancel);
             if (response.status == 401 || response.status == 403 || response.status == 404 || response.status == 410) {
@@ -83,8 +89,11 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
             Map<String, Object> pageRoot = SafeJson.object(SafeJson.parse(response.body));
             List<Object> records = pageRoot == null ? null : SafeJson.array(pageRoot.get("records"));
             if (records == null) throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
+            if (records.size() > MAX_RECORDS_PER_PAGE) {
+                throw new AlbumException(AlbumException.Code.METADATA_TOO_LARGE);
+            }
             recordCount += records.size();
-            if (recordCount > MAX_RECORDS) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+            if (recordCount > MAX_RECORDS) throw new AlbumException(AlbumException.Code.METADATA_TOO_LARGE);
             for (Object rawRecord : records) {
                 Map<String, Object> record = SafeJson.object(rawRecord);
                 Map<String, Object> fields = record == null ? null : SafeJson.object(record.get("fields"));
@@ -102,7 +111,7 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
             if (marker == null || marker.isEmpty()) { marker = null; break; }
             if (marker.length() > 4096 || !markers.add(marker)) throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
         }
-        if (marker != null) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+        if (marker != null) throw new AlbumException(AlbumException.Code.METADATA_TOO_LARGE);
 
         List<AppleAlbumClient.ImageRef> items = new ArrayList<>();
         Set<String> referencedMasters = new HashSet<>();
@@ -110,13 +119,13 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
             Master master = masters.get(asset.masterId);
             referencedMasters.add(asset.masterId);
             if (master == null || isVideo(asset.fields) || isVideo(master.fields)) continue;
-            URI image = pickImage(asset.fields);
-            if (image == null) image = pickImage(master.fields);
-            if (image != null) {
+            List<URI> renditions = pickImages(asset.fields);
+            if (renditions.isEmpty()) renditions = pickImages(master.fields);
+            if (!renditions.isEmpty()) {
                 Long captureMillis = PhotoMetadata.parseAppleDate(fieldValue(asset.fields, "assetDate"));
-                items.add(new AppleAlbumClient.ImageRef(image, asset.id,
+                items.add(new AppleAlbumClient.ImageRef(renditions, asset.id,
                         new PhotoMetadata(captureMillis, null, null)));
-                if (items.size() > MAX_ITEMS) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+                if (items.size() > MAX_ITEMS) throw new AlbumException(AlbumException.Code.METADATA_TOO_LARGE);
             }
         }
         // Some older/synthetic query variants return masters without their CPLAsset partner.
@@ -124,10 +133,10 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
         // current Shared Collections (edited renditions can live on CPLAsset).
         for (Master master : masters.values()) {
             if (referencedMasters.contains(master.id) || isVideo(master.fields)) continue;
-            URI image = pickImage(master.fields);
-            if (image != null) {
-                items.add(new AppleAlbumClient.ImageRef(image, master.id));
-                if (items.size() > MAX_ITEMS) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+            List<URI> renditions = pickImages(master.fields);
+            if (!renditions.isEmpty()) {
+                items.add(new AppleAlbumClient.ImageRef(renditions, master.id, PhotoMetadata.EMPTY));
+                if (items.size() > MAX_ITEMS) throw new AlbumException(AlbumException.Code.METADATA_TOO_LARGE);
             }
         }
         return items;
@@ -147,29 +156,71 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
         return false;
     }
 
-    private static URI pickImage(Map<String, Object> fields) {
-        String[] preferred = {"resJPEGFullRes", "resJPEGMedRes", "resJPEGSmallRes", "resJPEGThumbRes"};
-        for (String key : preferred) {
-            URI uri = renditionUri(fields, key);
-            if (uri != null) return uri;
-        }
-        // Apple has added other resJPEG*Res names over time. Accept those plus
-        // explicitly web-safe image resources; video and HEIC originals stay excluded.
-        URI fallback = null; double fallbackWidth = -1;
+    private static List<URI> pickImages(Map<String, Object> fields) {
+        List<Rendition> candidates = new ArrayList<>();
+        Set<URI> seen = new HashSet<>();
+        // Apple has added resJPEG*Res names over time. Accept those plus explicitly
+        // web-safe image resources; video and HEIC originals stay excluded.
         for (String key : fields.keySet()) {
             if (!isImageResource(fields, key)) continue;
-            URI uri = renditionUri(fields, key);
-            if (uri == null) continue;
-            double width = fieldNumber(fields, key.substring(0, key.length() - 3) + "Width");
-            if (fallback == null || width > fallbackWidth) { fallback = uri; fallbackWidth = width; }
+            Rendition candidate = rendition(fields, key);
+            if (candidate != null && seen.add(candidate.uri)) candidates.add(candidate);
         }
-        if (fallback != null) return fallback;
         String originalType = fieldString(fields, "resOriginalFileType");
         if ("public.jpeg".equals(originalType) || "public.png".equals(originalType)
                 || "org.webmproject.webp".equals(originalType) || "com.compuserve.gif".equals(originalType)) {
-            return renditionUri(fields, "resOriginalRes");
+            Rendition original = rendition(fields, "resOriginalRes");
+            if (original != null && seen.add(original.uri)) candidates.add(original);
         }
-        return null;
+        Collections.sort(candidates, new Comparator<Rendition>() {
+            @Override public int compare(Rendition left, Rendition right) {
+                if (left.edge < 0) return right.edge < 0 ? 0 : 1;
+                if (right.edge < 0) return -1;
+                return Double.compare(left.edge, right.edge);
+            }
+        });
+        List<URI> result = new ArrayList<>();
+        int primary = primary(candidates);
+        if (primary >= 0) {
+            result.add(candidates.get(primary).uri);
+            for (int i = primary - 1; i >= 0 && result.size() < MAX_RENDITIONS; i--) {
+                if (candidates.get(i).edge >= 0) result.add(candidates.get(i).uri);
+            }
+            for (int i = primary + 1; i < candidates.size() && result.size() < MAX_RENDITIONS; i++) {
+                result.add(candidates.get(i).uri);
+            }
+        } else {
+            for (Rendition candidate : candidates) {
+                result.add(candidate.uri);
+                if (result.size() == MAX_RENDITIONS) break;
+            }
+        }
+        return result;
+    }
+
+    private static Rendition rendition(Map<String, Object> fields, String key) {
+        URI uri = renditionUri(fields, key);
+        if (uri == null) return null;
+        Map<String, Object> field = SafeJson.object(fields.get(key));
+        Map<String, Object> value = field == null ? null : SafeJson.object(field.get("value"));
+        double size = value == null ? -1 : number(value.get("size"));
+        if (size < 0 && value != null) size = number(value.get("fileSize"));
+        if (size > SafeHttp.MAX_IMAGE_BYTES) return null;
+        String prefix = key.substring(0, key.length() - 3);
+        double edge = Math.max(fieldNumber(fields, prefix + "Width"), fieldNumber(fields, prefix + "Height"));
+        return new Rendition(uri, edge);
+    }
+
+    private static int primary(List<Rendition> sorted) {
+        int largestBelow = -1, smallestAbove = -1;
+        for (int i = 0; i < sorted.size(); i++) {
+            double edge = sorted.get(i).edge;
+            if (edge < 0) break;
+            if (edge >= TARGET_EDGE && edge <= 2560) return i;
+            if (edge < TARGET_EDGE) largestBelow = i;
+            else if (smallestAbove < 0) smallestAbove = i;
+        }
+        return largestBelow >= 0 ? largestBelow : smallestAbove;
     }
 
     private static URI renditionUri(Map<String, Object> fields, String key) {
@@ -271,6 +322,20 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
         return -1;
     }
 
+    private static double number(Object value) {
+        if (value instanceof Number) {
+            double number = ((Number) value).doubleValue();
+            return Double.isFinite(number) && number >= 0 ? number : -1;
+        }
+        if (value instanceof String) {
+            try {
+                double number = Double.parseDouble((String) value);
+                return Double.isFinite(number) && number >= 0 ? number : -1;
+            } catch (NumberFormatException ignored) { }
+        }
+        return -1;
+    }
+
     private static final class Master {
         final String id; final Map<String, Object> fields;
         Master(String id, Map<String, Object> fields) { this.id = id; this.fields = fields; }
@@ -281,5 +346,10 @@ final class CloudKitProtocol implements AppleAlbumClient.Protocol {
         Asset(String id, String masterId, Map<String, Object> fields) {
             this.id = id; this.masterId = masterId; this.fields = fields;
         }
+    }
+
+    private static final class Rendition {
+        final URI uri; final double edge;
+        Rendition(URI uri, double edge) { this.uri = uri; this.edge = edge; }
     }
 }

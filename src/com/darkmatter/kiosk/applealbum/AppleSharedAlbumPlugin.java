@@ -165,18 +165,29 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
                     image = images.get(cursor++);
                 }
                 try {
-                    byte[] source = currentClient.image(image, cancel);
-                    cancel.check();
-                    PhotoMetadata metadata = image.metadata.withFallback(ExifMetadata.read(source));
-                    byte[] display = PhotoEncoder.fit(source);
-                    source = null;
-                    OverlayOptions currentOverlay = overlay;
-                    String html = SlideshowHtml.image(display, fit, currentOverlay, metadata,
-                            new Date(), Locale.getDefault(), TimeZone.getDefault());
-                    display = null;
-                    publishIfCurrent(expectedGeneration, html, localImages.size());
-                    schedule(intervalSeconds, expectedGeneration);
-                    return;
+                    AlbumException renditionFailure = null;
+                    for (int rendition = 0; rendition < image.renditions.size(); rendition++) {
+                        try {
+                            byte[] source = currentClient.image(image, rendition, cancel);
+                            cancel.check();
+                            PhotoMetadata metadata = image.metadata.withFallback(ExifMetadata.read(source));
+                            byte[] display = PhotoEncoder.fit(source);
+                            source = null;
+                            OverlayOptions currentOverlay = overlay;
+                            String html = SlideshowHtml.image(display, fit, currentOverlay, metadata,
+                                    new Date(), Locale.getDefault(), TimeZone.getDefault());
+                            display = null;
+                            publishIfCurrent(expectedGeneration, html, localImages.size());
+                            schedule(intervalSeconds, expectedGeneration);
+                            return;
+                        } catch (AlbumException error) {
+                            if (error.code == AlbumException.Code.CANCELLED) throw error;
+                            if (!AppleAlbumClient.retryWithSmallerRendition(error.code)
+                                    || rendition + 1 >= image.renditions.size()) throw error;
+                            renditionFailure = error;
+                        }
+                    }
+                    if (renditionFailure != null) throw renditionFailure;
                 } catch (AlbumException error) {
                     if (error.code == AlbumException.Code.CANCELLED) throw error;
                     last = error;

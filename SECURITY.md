@@ -15,9 +15,10 @@ Include the plugin version, Kiosk Satellite version, Android version, URL **form
 - Public, anonymous, read-only albums only; no Apple authentication or invite acceptance.
 - HTTPS and allowlisted Apple host suffixes at input, response-derived endpoints, media references, and every redirect.
 - No cookies, credentials, telemetry, disk photo cache, or exception/server-body logging.
-- Fixed upper bounds on time, redirects, pages, records, items, JSON depth/nodes, metadata bytes, image bytes/dimensions/pixels, and inline output.
+- Fixed upper bounds on time, redirects, per-response metadata bytes, JSON depth/nodes, pages, per-page records, total records, per-batch items, total images, rendition candidates, image bytes/dimensions/pixels, rendered JPEG bytes, and inline output. Metadata is processed one response at a time; CloudKit requests 100 records per page and legacy media lookup stays in 25-photo batches.
+- Rendition selection rejects declared downloads over 8 MiB, prefers screen-sized web-safe images, and keeps at most four validated Apple-host candidates. Only an image-size failure advances to the next candidate; authentication, network, content-type, cancellation, and other failures remain fail-closed.
 - EXIF/IPTC/XMP parsing is local, JPEG-only, segment-bounded to 64 KiB, entry-count/resource bounded, offset-checked, and limited to capture date, GPS, and explicit place fields. Captions/descriptions are excluded. Coordinates and rendered strings are range/length checked, control/format characters are removed, and HTML is escaped.
 - No reverse geocoding or metadata network service; optional capture date, place name, and GPS stay in the in-memory renderer and default off.
 - Pixel shift writes only the overlay container's CSS transform. The image element, source, dimensions, object-fit, and transform remain unchanged.
 - Session generation checks and active-connection cancellation before publication.
-- Fixed user-facing error messages that contain no untrusted values.
+- Separate fixed user-facing messages for metadata-response, image-download, decoded-image, and display-output limits; none contains untrusted values.

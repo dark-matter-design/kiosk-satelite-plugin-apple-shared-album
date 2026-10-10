@@ -2,6 +2,8 @@ package com.darkmatter.kiosk.applealbum;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,6 +15,9 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
     private static final String BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     private static final int MAX_ITEMS = 1000;
     private static final int BATCH = 25;
+    private static final int MAX_RENDITIONS = 4;
+    private static final int MAX_ASSET_ITEMS_PER_BATCH = 250;
+    private static final double TARGET_EDGE = 1920;
     private static final int MAX_PARTITION_REDIRECTS = 3;
     private final AppleAlbumClient.Transport transport;
 
@@ -39,7 +44,7 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
         Map<String, Object> root = SafeJson.object(SafeJson.parse(stream.body));
         List<Object> photos = root == null ? null : SafeJson.array(root.get("photos"));
         if (photos == null) throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
-        if (photos.size() > MAX_ITEMS) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+        if (photos.size() > MAX_ITEMS) throw new AlbumException(AlbumException.Code.METADATA_TOO_LARGE);
 
         List<Plan> plans = new ArrayList<>();
         for (Object rawPhoto : photos) {
@@ -49,9 +54,9 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
             String mediaType = SafeJson.string(photo, "mediaAssetType");
             Map<String, Object> derivatives = photo == null ? null : SafeJson.object(photo.get("derivatives"));
             if (guid == null || guid.length() > 256 || derivatives == null || isVideo(mediaType, derivatives)) continue;
-            String checksum = bestImageChecksum(derivatives);
+            List<String> checksums = bestImageChecksums(derivatives);
             Long captureMillis = PhotoMetadata.parseAppleDate(photo.get("dateCreated"));
-            if (checksum != null) plans.add(new Plan(guid, checksum, new PhotoMetadata(captureMillis, null, null)));
+            if (!checksums.isEmpty()) plans.add(new Plan(guid, checksums, new PhotoMetadata(captureMillis, null, null)));
         }
 
         Map<String, URI> urls = new LinkedHashMap<>();
@@ -62,7 +67,7 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
             for (int i = offset; i < Math.min(plans.size(), offset + BATCH); i++) {
                 Plan plan = plans.get(i);
                 guids.add(plan.guid);
-                requestedChecksums.add(plan.checksum);
+                requestedChecksums.addAll(plan.checksums);
             }
             Map<String, Object> request = new LinkedHashMap<>(); request.put("photoGuids", guids);
             AppleAlbumClient.Response response = transport.post(base.resolve("webasseturls"), SafeJson.encode(request), cancel);
@@ -70,6 +75,9 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
             Map<String, Object> assetRoot = SafeJson.object(SafeJson.parse(response.body));
             Map<String, Object> items = assetRoot == null ? null : SafeJson.object(assetRoot.get("items"));
             if (items == null) throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
+            if (items.size() > MAX_ASSET_ITEMS_PER_BATCH) {
+                throw new AlbumException(AlbumException.Code.METADATA_TOO_LARGE);
+            }
             for (Map.Entry<String, Object> entry : items.entrySet()) {
                 if (!requestedChecksums.contains(entry.getKey())) continue;
                 Map<String, Object> item = SafeJson.object(entry.getValue());
@@ -86,8 +94,12 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
 
         List<AppleAlbumClient.ImageRef> result = new ArrayList<>();
         for (Plan plan : plans) {
-            URI uri = urls.get(plan.checksum);
-            if (uri != null) result.add(new AppleAlbumClient.ImageRef(uri, plan.guid, plan.metadata));
+            List<URI> renditions = new ArrayList<>();
+            for (String checksum : plan.checksums) {
+                URI uri = urls.get(checksum);
+                if (uri != null) renditions.add(uri);
+            }
+            if (!renditions.isEmpty()) result.add(new AppleAlbumClient.ImageRef(renditions, plan.guid, plan.metadata));
         }
         return result;
     }
@@ -99,19 +111,57 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
         if (response.status < 200 || response.status >= 300) throw new AlbumException(AlbumException.Code.NETWORK);
     }
 
-    private static String bestImageChecksum(Map<String, Object> derivatives) {
-        String best = null; double bestScore = -1;
+    private static List<String> bestImageChecksums(Map<String, Object> derivatives) {
+        List<Derivative> candidates = new ArrayList<>();
+        Set<String> checksums = new HashSet<>();
         for (Map.Entry<String, Object> entry : derivatives.entrySet()) {
             String key = entry.getKey();
             if (!key.matches("[0-9]+")) continue;
             Map<String, Object> derivative = SafeJson.object(entry.getValue());
             String checksum = SafeJson.string(derivative, "checksum");
-            if (checksum == null || checksum.length() > 256) continue;
-            double score = number(key);
-            if (score < 0) score = number(derivative.get("fileSize"));
-            if (score > bestScore) { bestScore = score; best = checksum; }
+            if (checksum == null || checksum.length() > 256 || !checksums.add(checksum)) continue;
+            double size = number(derivative.get("fileSize"));
+            if (size > SafeHttp.MAX_IMAGE_BYTES) continue;
+            double edge = Math.max(number(key), Math.max(number(derivative.get("width")), number(derivative.get("height"))));
+            candidates.add(new Derivative(checksum, edge));
         }
-        return best;
+        Collections.sort(candidates, new Comparator<Derivative>() {
+            @Override public int compare(Derivative left, Derivative right) {
+                if (left.edge < 0) return right.edge < 0 ? 0 : 1;
+                if (right.edge < 0) return -1;
+                return Double.compare(left.edge, right.edge);
+            }
+        });
+        List<String> result = new ArrayList<>();
+        int primary = primary(candidates);
+        if (primary >= 0) {
+            result.add(candidates.get(primary).checksum);
+            for (int i = primary - 1; i >= 0 && result.size() < MAX_RENDITIONS; i--) {
+                if (candidates.get(i).edge >= 0) result.add(candidates.get(i).checksum);
+            }
+            for (int i = primary + 1; i < candidates.size() && result.size() < MAX_RENDITIONS; i++) {
+                result.add(candidates.get(i).checksum);
+            }
+        } else {
+            for (Derivative candidate : candidates) {
+                result.add(candidate.checksum);
+                if (result.size() == MAX_RENDITIONS) break;
+            }
+        }
+        return result;
+    }
+
+    /** Prefer the smallest screen-sized derivative, then monotonically smaller fallbacks. */
+    private static int primary(List<Derivative> sorted) {
+        int largestBelow = -1, smallestAbove = -1;
+        for (int i = 0; i < sorted.size(); i++) {
+            double edge = sorted.get(i).edge;
+            if (edge < 0) break;
+            if (edge >= TARGET_EDGE && edge <= 2560) return i;
+            if (edge < TARGET_EDGE) largestBelow = i;
+            else if (smallestAbove < 0) smallestAbove = i;
+        }
+        return largestBelow >= 0 ? largestBelow : smallestAbove;
     }
 
     private static boolean isVideo(String mediaType, Map<String, Object> derivatives) {
@@ -160,9 +210,14 @@ final class LegacyProtocol implements AppleAlbumClient.Protocol {
     }
 
     private static final class Plan {
-        final String guid; final String checksum; final PhotoMetadata metadata;
-        Plan(String guid, String checksum, PhotoMetadata metadata) {
-            this.guid = guid; this.checksum = checksum; this.metadata = metadata;
+        final String guid; final List<String> checksums; final PhotoMetadata metadata;
+        Plan(String guid, List<String> checksums, PhotoMetadata metadata) {
+            this.guid = guid; this.checksums = checksums; this.metadata = metadata;
         }
+    }
+
+    private static final class Derivative {
+        final String checksum; final double edge;
+        Derivative(String checksum, double edge) { this.checksum = checksum; this.edge = edge; }
     }
 }

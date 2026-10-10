@@ -17,10 +17,7 @@ final class PhotoEncoder {
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
         BitmapFactory.decodeByteArray(source, 0, source.length, bounds);
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outWidth > MAX_SOURCE_EDGE
-                || bounds.outHeight > MAX_SOURCE_EDGE || (long) bounds.outWidth * bounds.outHeight > MAX_SOURCE_PIXELS) {
-            throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
-        }
+        validateSourceBounds(bounds.outWidth, bounds.outHeight);
         int sample = 1;
         while (Math.max(bounds.outWidth / sample, bounds.outHeight / sample) > MAX_EDGE * 2) sample *= 2;
         BitmapFactory.Options options = new BitmapFactory.Options();
@@ -28,7 +25,7 @@ final class PhotoEncoder {
         options.inPreferredConfig = Bitmap.Config.RGB_565;
         Bitmap decoded;
         try { decoded = BitmapFactory.decodeByteArray(source, 0, source.length, options); }
-        catch (OutOfMemoryError error) { throw new AlbumException(AlbumException.Code.TOO_LARGE); }
+        catch (OutOfMemoryError error) { throw new AlbumException(AlbumException.Code.DECODE_TOO_LARGE); }
         catch (RuntimeException error) { throw new AlbumException(AlbumException.Code.INVALID_RESPONSE); }
         if (decoded == null) throw new AlbumException(AlbumException.Code.INVALID_RESPONSE);
 
@@ -55,11 +52,18 @@ final class PhotoEncoder {
                 Bitmap scaled = Bitmap.createScaledBitmap(current, width, height, true);
                 if (scaled != current) { current.recycle(); current = scaled; }
             }
-            throw new AlbumException(AlbumException.Code.TOO_LARGE);
+            throw new AlbumException(AlbumException.Code.OUTPUT_TOO_LARGE);
         } catch (OutOfMemoryError error) {
-            throw new AlbumException(AlbumException.Code.TOO_LARGE);
+            throw new AlbumException(AlbumException.Code.DECODE_TOO_LARGE);
         } finally {
             if (!current.isRecycled()) current.recycle();
+        }
+    }
+
+    static void validateSourceBounds(int width, int height) throws AlbumException {
+        if (width <= 0 || height <= 0 || width > MAX_SOURCE_EDGE || height > MAX_SOURCE_EDGE
+                || (long) width * height > MAX_SOURCE_PIXELS) {
+            throw new AlbumException(AlbumException.Code.DECODE_TOO_LARGE);
         }
     }
 }

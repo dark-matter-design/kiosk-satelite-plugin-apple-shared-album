@@ -7,10 +7,11 @@ import java.util.Map;
 
 /** Small bounded JSON codec used to avoid a runtime dependency. */
 final class SafeJson {
+    static final int MAX_NODES = 50_000;
     private SafeJson() {}
 
     static Object parse(byte[] bytes) throws AlbumException {
-        if (bytes == null || bytes.length > SafeHttp.MAX_METADATA_BYTES) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+        if (bytes == null || bytes.length > SafeHttp.MAX_METADATA_BYTES) throw new AlbumException(AlbumException.Code.METADATA_TOO_LARGE);
         try {
             String text = new String(bytes, "UTF-8");
             Parser parser = new Parser(text);
@@ -51,7 +52,7 @@ final class SafeJson {
     }
 
     private static void write(Object value, StringBuilder out, int depth) throws AlbumException {
-        if (depth > 24 || out.length() > SafeHttp.MAX_METADATA_BYTES) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+        if (depth > 24 || out.length() > SafeHttp.MAX_METADATA_BYTES) throw new AlbumException(AlbumException.Code.METADATA_TOO_LARGE);
         if (value == null) { out.append("null"); return; }
         if (value instanceof String) { quote((String) value, out); return; }
         if (value instanceof Boolean || value instanceof Number) { out.append(value); return; }
@@ -103,7 +104,7 @@ final class SafeJson {
         Parser(String text) { this.text = text; }
 
         Object value(int depth) throws AlbumException {
-            if (depth > 24 || ++nodes > 20000) throw new AlbumException(AlbumException.Code.TOO_LARGE);
+            if (depth > 24 || ++nodes > MAX_NODES) throw new AlbumException(AlbumException.Code.METADATA_TOO_LARGE);
             space();
             if (at >= text.length()) throw new IllegalArgumentException();
             char c = text.charAt(at);

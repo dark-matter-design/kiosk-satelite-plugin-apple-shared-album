@@ -27,7 +27,7 @@ final class SlideshowHtml {
                 + "<img alt=\"\" src=\"data:image/jpeg;base64," + Base64Codec.encode(jpeg) + "\">"
                 + overlayHtml(options, metadata, now, locale, zone);
         if (html.getBytes(StandardCharsets.UTF_8).length > SDK_INLINE_LIMIT) {
-            throw new AlbumException(AlbumException.Code.TOO_LARGE);
+            throw new AlbumException(AlbumException.Code.OUTPUT_TOO_LARGE);
         }
         return html;
     }
