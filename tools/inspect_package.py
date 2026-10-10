@@ -6,6 +6,7 @@ from pathlib import Path
 import zipfile
 
 from plugin_package import validate_package_entries
+from plugin_dex import class_interfaces
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / 'dist'
@@ -52,8 +53,19 @@ try:
         dex_names = jar.namelist()
         if not dex_names or any(not name.endswith('.dex') for name in dex_names):
             raise SystemExit(f'plugin.jar has unexpected entries: {dex_names}')
+        classes = {}
+        for dex_name in dex_names:
+            classes.update(class_interfaces(jar.read(dex_name)))
+        entry = 'L' + manifest['entryClass'].replace('.', '/') + ';'
+        sdk_interface = 'Lme/jxl/kiosk/plugins/KioskPlugin;'
+        if entry not in classes:
+            raise SystemExit(f'Manifest entry class is absent from DEX: {manifest["entryClass"]}')
+        access, interfaces = classes[entry]
+        if not access & 0x1 or sdk_interface not in interfaces:
+            raise SystemExit('Manifest entry class must be public and directly implement KioskPlugin')
 finally:
     jar_path.unlink(missing_ok=True)
 
 print(f'Package inspection passed: {package.name}; compressed={package.stat().st_size}; '
-      f'expanded={expanded}; sha256={digest}; entries={len(names)}')
+      f'expanded={expanded}; sha256={digest}; entries={len(names)}; '
+      f'entry={manifest["entryClass"]} implements KioskPlugin')

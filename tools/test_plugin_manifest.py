@@ -8,6 +8,16 @@ from plugin_manifest import build_manifest
 
 
 class BuildManifestTest(unittest.TestCase):
+    def test_project_declares_upstream_screensaver_discovery_contract(self):
+        manifest = json.loads((Path(__file__).resolve().parents[1] / 'kiosk-satellite-plugin.json').read_text())
+        self.assertEqual(manifest['schemaVersion'], 1)
+        self.assertEqual(manifest['apiVersion'], 1)
+        self.assertIn('screensaver', manifest['capabilities'])
+        self.assertEqual(
+            manifest['entryClass'],
+            'com.darkmatter.kiosk.applealbum.AppleSharedAlbumPlugin',
+        )
+
     def test_project_duration_setting_matches_runtime_contract(self):
         manifest = json.loads((Path(__file__).resolve().parents[1] / 'kiosk-satellite-plugin.json').read_text())
         duration = next(setting for setting in manifest['settings'] if setting['key'] == 'intervalSeconds')

@@ -35,8 +35,9 @@ public final class AppleAlbumTest {
         enforcesSafeHostsAndInlineBudget();
         sanitizesEveryPublicError();
         jsonRoundTripsAndBoundsDepth();
+        publishesSelectableScreensaverBeforeAlbumIo();
         lifecycleCancellationDoesNotWaitForMetadataIo();
-        System.out.println("AppleAlbumTest: 16 checks passed");
+        System.out.println("AppleAlbumTest: 17 checks passed");
     }
 
     private static void parsesOnlySupportedUrls() throws Exception {
@@ -297,6 +298,18 @@ public final class AppleAlbumTest {
         assert elapsedMillis < 500 : "stop waited for metadata I/O: " + elapsedMillis + " ms";
     }
 
+    /** Discovery cannot depend on Apple or a configured URL: KS lists a renderer only after this call. */
+    private static void publishesSelectableScreensaverBeforeAlbumIo() {
+        AppleSharedAlbumPlugin plugin = new AppleSharedAlbumPlugin(new FakeTransport());
+        FakeHost host = new FakeHost();
+        plugin.start(host, Collections.<String, Object>emptyMap());
+        assert "apple_album".equals(host.screensaverKey);
+        assert "Apple Shared Album".equals(host.screensaverTitle);
+        assert host.screensaverHtml != null && host.screensaverHtml.contains("Add a public Apple Shared Album link");
+        plugin.stop();
+        assert "apple_album".equals(host.removedScreensaverKey);
+    }
+
     private static void rejectsUrl(String value) throws Exception {
         try { AlbumUrl.parse(value); throw new AssertionError("invalid URL accepted"); }
         catch (AlbumException expected) { assert expected.code == AlbumException.Code.INVALID_URL; }
@@ -350,8 +363,14 @@ public final class AppleAlbumTest {
     }
 
     private static final class FakeHost implements PluginHost {
-        @Override public void publishScreensaver(String key, String title, String html) { }
-        @Override public void removeScreensaver(String key) { }
+        String screensaverKey;
+        String screensaverTitle;
+        String screensaverHtml;
+        String removedScreensaverKey;
+        @Override public void publishScreensaver(String key, String title, String html) {
+            screensaverKey = key; screensaverTitle = title; screensaverHtml = html;
+        }
+        @Override public void removeScreensaver(String key) { removedScreensaverKey = key; }
         @Override public void status(String message, boolean error) { }
         @Override public void showWindow(String title, String message, String buttonLabel) { }
         @Override public void hideWindow() { }

@@ -17,6 +17,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: jxlarrea/kiosk-satellite
+          ref: abc70b0839842e251b8d3917bbbb44569036556c
+          path: .upstream/kiosk-satellite
+          persist-credentials: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -34,6 +40,8 @@ jobs:
           else
             python3 tools/build.py --android-platform 35
           fi
+      - name: Check upstream screensaver discovery contract
+        run: python3 tools/check_upstream_screensaver.py .upstream/kiosk-satellite
       - name: Inspect and audit
         run: |
           python3 tools/inspect_package.py

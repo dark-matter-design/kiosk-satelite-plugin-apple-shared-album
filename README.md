@@ -23,6 +23,8 @@ The first form uses Apple's legacy `sharedstreams` service. The second uses anon
 3. Enable **Apple Shared Album** and paste the complete public album link.
 4. Under **Screensaver**, select **Apple Shared Album (Apple Shared Album)**.
 
+The renderer is registered as soon as the plugin starts, before it contacts Apple. On Kiosk Satellite 2026.10.18, the **on-device** Screensaver page refreshes its mode list when a plugin registers a renderer. Remote Admin does not invalidate an already loaded settings schema for that catalog change. If Remote Admin shows only built-in modes, confirm the plugin row says **Running**, then reload Remote Admin (or select the mode once on the kiosk itself) and reopen **Screensaver > Screensaver mode**. Album validation and photo count do not control whether the mode is listed. A Kiosk Satellite app restart is not normally required; disable/re-enable is useful only if the plugin is not running.
+
 The settings also control display duration (5 seconds–1 hour in 5-second steps, 30 seconds by default), order, and fit versus fill. Existing saved durations remain unchanged after updating. **Reconnect and refresh album** discards the current list and reconnects immediately. The normal list refresh interval is 15 minutes.
 
 ## Privacy and security
@@ -51,6 +53,7 @@ The release toolchain is pinned to Ubuntu 24.04, Temurin 21, Android platform 35
 ```sh
 python3 tools/test.py
 python3 tools/build.py --android-platform 35
+python3 tools/check_upstream_screensaver.py /path/to/kiosk-satellite
 python3 tools/inspect_package.py
 python3 tools/audit_repository.py
 ```
