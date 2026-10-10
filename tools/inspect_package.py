@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import zipfile
 
+from plugin_package import validate_package_entries
+
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / 'dist'
 packages = sorted(DIST.glob('*.zip'))
@@ -16,9 +18,12 @@ if package.stat().st_size > 4 * 1024 * 1024:
 
 with zipfile.ZipFile(package) as archive:
     names = archive.namelist()
-    required = {'kiosk-satellite-plugin.json', 'plugin.jar', 'LICENSE', 'NOTICE'}
-    if set(names) != required or names != sorted(names):
-        raise SystemExit(f'Unexpected or non-sorted package entries: {names}')
+    try:
+        validate_package_entries((info.filename, info.is_dir()) for info in archive.infolist())
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if names != sorted(names):
+        raise SystemExit(f'Package entries are not sorted: {names}')
     if any(info.date_time != (2020, 1, 1, 0, 0, 0) for info in archive.infolist()):
         raise SystemExit('Package entry timestamp is not deterministic')
     expanded = sum(info.file_size for info in archive.infolist())

@@ -55,7 +55,7 @@ python3 tools/inspect_package.py
 python3 tools/audit_repository.py
 ```
 
-The build writes a deterministic `dist/apple-shared-album-0.1.0.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
+The build writes a deterministic `dist/apple-shared-album-0.1.1.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. The ZIP contains exactly the Plugin Manager root files (`kiosk-satellite-plugin.json`, `plugin.jar`, and `LICENSE`) plus any supported `assets/` files; `NOTICE` remains in the repository and is linked below for upstream attribution. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
 
 Tests use only synthetic JSON, fake transport responses, and reserved fake paths. They never contact an album. See [docs/development.md](docs/development.md) for the verification matrix and [docs/research.md](docs/research.md) for source/version/license provenance.
 

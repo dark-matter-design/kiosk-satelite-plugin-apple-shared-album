@@ -13,7 +13,7 @@ python3 tools/inspect_package.py
 python3 tools/audit_repository.py
 ```
 
-`tools/test.py` compiles the SDK, plugin, and tests and runs synthetic protocol tests plus the upstream Python tooling tests. It does not make network requests. `inspect_package.py` verifies package names, fixed timestamps, the matching embedded/release manifests, checksum, DEX presence, size limits, and inclusion of LICENSE/NOTICE. `audit_repository.py` rejects credential-like files and scans tracked text plus Git history for common secret markers and live Apple album URLs.
+`tools/test.py` compiles the SDK, plugin, and tests and runs synthetic protocol tests plus the upstream Python tooling tests. It does not make network requests. `inspect_package.py` verifies the Plugin Manager entry allowlist and uniqueness rule, package names, fixed timestamps, the matching embedded/release manifests, checksum, DEX presence, and size limits. The installable ZIP includes `LICENSE`; `NOTICE` remains in the repository and release-tag README because Plugin Manager rejects it as a package entry. `audit_repository.py` rejects credential-like files and scans tracked text plus Git history for common secret markers and live Apple album URLs.
 
 ## Manual device gate
 
